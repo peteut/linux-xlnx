@@ -1272,6 +1272,17 @@ config TI_ADS1100
 	  This driver can also be built as a module. If so, the module will be
 	  called ti-ads1100.
 
+config TI_ADS1158
+	tristate "Texas Instruments ADS1158 ADC"
+	depends on SPI_MASTER
+	select REGMAP_SPI
+	help
+	  Say yes here to build support for Texas Instruments ADS1158
+	  SPI analog to digital converters (ADC).
+
+	  To compile this driver as a module, choose M here: the module will be
+	  called ti-ads1158.
+
 config TI_ADS7950
 	tristate "Texas Instruments ADS7950 ADC driver"
 	depends on SPI && GPIOLIB
