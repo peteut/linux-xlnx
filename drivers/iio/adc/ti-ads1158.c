@@ -33,6 +33,12 @@ enum ads1158_cmd {
 #define ADS1158_CMD_MUL 4
 #define ADS1158_CMD_ADDR_MASK GENMASK(3, 0)
 
+/* Status byte. */
+#define ADS1158_STATUS_NEW 7
+#define ADS1158_STATUS_OVF 6
+#define ADS1158_STATUS_SUPPLY 5
+#define ADS1158_STATUS_CHID_MASK GENMASK(4, 0)
+
 /* MUXSCH */
 #define ADS1158_AINP GENMASK(7, 4)
 #define ADS1158_AINN GENMASK(3, 0)
@@ -555,7 +561,20 @@ release:
 	if (!ret)
 		return ret;
 
-	memcpy(&data,  &rx_buf[1], 2);
+	if ((rx_buf[0] &
+	     ~(BIT(ADS1158_STATUS_OVF) | BIT(ADS1158_STATUS_SUPPLY))) !=
+	    (BIT(ADS1158_STATUS_NEW) |
+	     FIELD_PREP(ADS1158_STATUS_CHID_MASK, chan->scan_index))) {
+		dev_err(indio_dev->dev.parent, "Invalid status byte (0x%02x)\n",
+			rx_buf[0]);
+		return -EIO;
+	}
+	if (rx_buf[0] & BIT(ADS1158_STATUS_OVF))
+		dev_err(indio_dev->dev.parent, "Overflow detected (0x%02x)\n",
+			rx_buf[0]);
+	return -ERANGE;
+
+	memcpy(&data, &rx_buf[1], 2);
 	*val = be16_to_cpu(data);
 
 	return IIO_VAL_INT;
