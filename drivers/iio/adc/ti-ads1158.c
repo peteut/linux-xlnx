@@ -612,10 +612,31 @@ static int ads1158_read_raw(struct iio_dev *indio_dev,
 	return ret;
 }
 
+static int ads1158_read_label(struct iio_dev *iio_dev,
+			      const struct iio_chan_spec *chan, char *label)
+{
+	int ret;
+	char *name, *p;
+
+	name = kstrdup(chan->datasheet_name, GFP_KERNEL);
+	if (!name)
+		return -ENOMEM;
+
+	for (p = name; *p != '\0'; p++) {
+		*p = tolower(*p);
+	}
+
+	ret = sysfs_emit(label, "%s\n", name);
+	kfree(name);
+
+	return ret;
+}
+
 static const struct iio_info ads1158_info = {
 	.read_avail = ads1158_read_avail,
 	.read_raw = ads1158_read_raw,
 	.write_raw = ads1158_write_raw,
+	.read_label = ads1158_read_label,
 };
 
 static int ads1158_probe(struct spi_device *spi)
