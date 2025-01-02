@@ -98,7 +98,7 @@ struct ads1158_state {
 	struct spi_device *spi;
 	struct regmap *regmap;
 	struct regmap_field *regfields[ADS1158_REGF_MAX];
-	struct regulator *vref_p, *vref_n;
+	struct regulator *vref;
 	struct mutex lock;
 
 	u32 clock_frequency;
@@ -342,24 +342,14 @@ static int ads1158_write_average(struct ads1158_state *st, int val)
 
 static int ads1158_get_ref_voltage_uv(struct ads1158_state *st)
 {
-	int vp_uv, vn_uv;
+	int vref_uv;
 
-	vp_uv = regulator_get_voltage(st->vref_p);
-	if (vp_uv < 0) {
-		dev_err(&st->spi->dev, "Could not get voltage (%d)\n", vp_uv);
-		return vp_uv;
+	vref_uv = regulator_get_voltage(st->vref);
+	if (vref_uv < 0) {
+		dev_err(&st->spi->dev, "Could not get voltage (%d)\n", vref_uv);
+		return vref_uv;
 	}
-	if (!IS_ERR(st->vref_n)) {
-		vn_uv = regulator_get_voltage(st->vref_n);
-		if (vn_uv < 0) {
-			dev_err(&st->spi->dev, "Could not get voltage (%d)\n",
-				vn_uv);
-			return vn_uv;
-		}
-	} else
-		vn_uv = 0;
-
-	return vp_uv - vn_uv;
+	return vref_uv;
 }
 
 static int ads1158_scale(struct ads1158_state *st,
@@ -713,33 +703,16 @@ static int ads1158_probe(struct spi_device *spi)
 
 	mutex_init(&st->lock);
 
-	ret = devm_regulator_get_enable(indio_dev->dev.parent, "vref-p");
+	ret = devm_regulator_get_enable(indio_dev->dev.parent, "vref");
 	if (ret)
 		return dev_err_probe(
-			indio_dev->dev.parent, PTR_ERR(st->vref_p),
+			indio_dev->dev.parent, PTR_ERR(st->vref),
 			"Could not get and enable regulator (%d)\n", ret);
 
-	st->vref_p = devm_regulator_get(indio_dev->dev.parent, "vref-p");
-	if (IS_ERR(st->vref_p))
-		return dev_err_probe(indio_dev->dev.parent, PTR_ERR(st->vref_p),
+	st->vref = devm_regulator_get(indio_dev->dev.parent, "vref");
+	if (IS_ERR(st->vref))
+		return dev_err_probe(indio_dev->dev.parent, PTR_ERR(st->vref),
 				     "Could not get regulator (%d)\n", ret);
-
-	ret = devm_regulator_get_enable_optional(indio_dev->dev.parent,
-						 "vref-n");
-	if (ret < 0 && ret != -ENODEV)
-		return dev_err_probe(indio_dev->dev.parent, ret,
-				     "Could no get and enable regulator (%d)\n",
-				     ret);
-
-	st->vref_n =
-		devm_regulator_get_optional(indio_dev->dev.parent, "vref-n");
-	if (IS_ERR(st->vref_n)) {
-		ret = PTR_ERR(st->vref_n);
-		if (ret != -ENODEV)
-			return dev_err_probe(
-				indio_dev->dev.parent, ret,
-				"Could not get and regulator (%d)\n", ret);
-	}
 
 	buf = FIELD_PREP(ADS1158_CMD_MASK, RESET_CMD);
 	ret = spi_write(spi, &buf, 1);
