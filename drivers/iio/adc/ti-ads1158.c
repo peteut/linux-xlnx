@@ -760,6 +760,12 @@ static const struct of_device_id ads1158_of_match[] = {
 };
 MODULE_DEVICE_TABLE(of, ads1158_of_match);
 
+static const struct spi_device_id ads1158_id[] = {
+	{ .name = "ads1158" },
+	{},
+};
+MODULE_DEVICE_TABLE(spi, ads1158_id);
+
 static struct spi_driver ads1158_driver = {
 	.driver = {
 		.name = KBUILD_MODNAME,
@@ -767,6 +773,7 @@ static struct spi_driver ads1158_driver = {
 		.of_match_table = of_match_ptr(ads1158_of_match),
 	},
 	.probe = ads1158_probe,
+	.id_table = ads1158_id,
 };
 module_spi_driver(ads1158_driver);
 
