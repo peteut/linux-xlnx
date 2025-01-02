@@ -632,11 +632,41 @@ static int ads1158_read_label(struct iio_dev *iio_dev,
 	return ret;
 }
 
+static int ads1158_debugfs_reg_access(struct iio_dev *indio_dev, unsigned reg,
+				      unsigned writeval, unsigned *readval)
+{
+	struct ads1158_state *st = iio_priv(indio_dev);
+	int ret;
+
+	mutex_lock(&st->lock);
+	if (!readval)
+		ret = regmap_write(st->regmap, reg, writeval);
+	else
+		ret = regmap_read(st->regmap, reg, readval);
+	mutex_unlock(&st->lock);
+
+	return ret;
+}
+
+static int ads1158_fwnode_xlate(struct iio_dev *indio_dev,
+				const struct fwnode_reference_args *iiospec)
+{
+	int i;
+
+	for (i = 0; i < indio_dev->num_channels; i++)
+		if (indio_dev->channels[i].scan_index)
+			return i;
+
+	return -EINVAL;
+}
+
 static const struct iio_info ads1158_info = {
 	.read_avail = ads1158_read_avail,
 	.read_raw = ads1158_read_raw,
 	.write_raw = ads1158_write_raw,
 	.read_label = ads1158_read_label,
+	.debugfs_reg_access = ads1158_debugfs_reg_access,
+	.fwnode_xlate = ads1158_fwnode_xlate,
 };
 
 static int ads1158_probe(struct spi_device *spi)
