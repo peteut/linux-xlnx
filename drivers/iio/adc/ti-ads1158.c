@@ -59,6 +59,7 @@ enum ads1158_regs {
 	ADS1158_MUXSG_0,
 	ADS1158_MUXSG_1,
 	ADS1158_SYSRED,
+	ADS1158_GPIOC,
 	ADS1158_GPIOD,
 	ADS1158_ID,
 	ADS1158_REG_MAX,
@@ -528,7 +529,7 @@ static int ads1158_read_single_value(struct iio_dev *indio_dev,
 
 	ret = iio_device_claim_direct_mode(indio_dev);
 	if (ret)
-		goto release;
+		return ret;
 
 	ret = ads1158_configure_regs_single_value(st, chan);
 	if (ret)
