@@ -23,7 +23,8 @@
 
 /* Command byte */
 enum ads1158_cmd {
-	CHAN_DATA_READ_CMD = 0x1,
+	CHAN_DATA_DIRECT,
+	CHAN_DATA_READ_CMD,
 	REG_READ_CMD,
 	REG_WRITE_CMD,
 	PULSE_CONV_CMD,
@@ -90,8 +91,16 @@ static const struct reg_field ads1158_regfields[] = {
 
 static const int ads1158_data_rate_average[] = { 64, 16, 4, 1 };
 /* SPS for clock frequency of 16 MHz */
-static const int ads1158_data_rate_auto_scan[] = { 1831, 6168, 15123, 23739 };
-static const int ads1158_data_rate_fixed_chan[] = { 1953, 7813, 31250, 125000 };
+
+enum ads1158_scan_mode {
+	ADS1158_SCAN_AUTO,
+	ADS1158_SCAN_FIXED,
+	ADS1158_SCAN_MAX,
+};
+static const int ads1158_data_rate[ADS1158_SCAN_MAX][4] = {
+	[ADS1158_SCAN_AUTO] = { 1831, 6168, 15123, 23739 },
+	[ADS1158_SCAN_FIXED] = { 1953, 7813, 31250, 125000 },
+};
 
 static const int ads1158_delay_us[] = { 0, 8, 16, 32, 64, 128, 256, 384 };
 
@@ -103,7 +112,7 @@ struct ads1158_state {
 	struct mutex lock;
 
 	u32 clock_frequency;
-	int data_rate[ARRAY_SIZE(ads1158_data_rate_fixed_chan)];
+	int data_rate[ADS1158_SCAN_MAX][ARRAY_SIZE(ads1158_data_rate[0])];
 };
 
 static bool ads1158_volatile_register(struct device *dev, unsigned int reg)
@@ -268,9 +277,12 @@ static const struct iio_chan_spec ads1158_channels[] = {
 	ADS1158_VOLTAGE_CHAN_IIO(18, SI_REF, "REF"),
 };
 
-static int ads1158_read_data_rate(struct ads1158_state *st, int *val)
+static int ads1158_read_data_rate(struct ads1158_state *st,
+				  struct iio_chan_spec const *chan, int *val)
 {
 	unsigned int buf;
+	int *data_rate = st->data_rate[chan->differential ? ADS1158_SCAN_FIXED :
+							    ADS1158_SCAN_AUTO];
 	int ret;
 
 	ret = regmap_field_read(st->regfields[ADS1158_REGF_DR], &buf);
@@ -279,21 +291,24 @@ static int ads1158_read_data_rate(struct ads1158_state *st, int *val)
 		return ret;
 	}
 
-	*val = st->data_rate[buf];
+	*val = data_rate[buf];
 
 	return IIO_VAL_INT;
 }
 
-static int ads1158_write_data_rate(struct ads1158_state *st, int val)
+static int ads1158_write_data_rate(struct ads1158_state *st,
+				   struct iio_chan_spec const *chan, int val)
 {
 	size_t i;
+	int *data_rate = st->data_rate[chan->differential ? ADS1158_SCAN_FIXED :
+							    ADS1158_SCAN_AUTO];
 	int ret;
 
-	for (i = 0; i < ARRAY_SIZE(st->data_rate); i++)
-		if (st->data_rate[i] == val)
+	for (i = 0; i < ARRAY_SIZE(st->data_rate[0]); i++)
+		if (data_rate[i] == val)
 			break;
 
-	if (i == ARRAY_SIZE(st->data_rate))
+	if (i == ARRAY_SIZE(st->data_rate[0]))
 		return -ERANGE;
 
 	ret = regmap_field_write(st->regfields[ADS1158_REGF_DR], i);
@@ -435,12 +450,14 @@ static int ads1158_read_avail(struct iio_dev *indio_dev,
 			      long mask)
 {
 	struct ads1158_state *st = iio_priv(indio_dev);
+	int *data_rate = st->data_rate[chan->differential ? ADS1158_SCAN_FIXED :
+							    ADS1158_SCAN_AUTO];
 
 	switch (mask) {
 	case IIO_CHAN_INFO_SAMP_FREQ:
 		*type = IIO_VAL_INT;
-		*vals = st->data_rate;
-		*length = ARRAY_SIZE(st->data_rate);
+		*vals = data_rate;
+		*length = ARRAY_SIZE(st->data_rate[0]);
 		return IIO_AVAIL_LIST;
 	case IIO_CHAN_INFO_AVERAGE_RAW:
 		*type = IIO_VAL_INT;
@@ -460,7 +477,7 @@ static int ads1158_write_raw(struct iio_dev *indio_dev,
 
 	switch (mask) {
 	case IIO_CHAN_INFO_SAMP_FREQ:
-		return ads1158_write_data_rate(st, val);
+		return ads1158_write_data_rate(st, chan, val);
 	case IIO_CHAN_INFO_AVERAGE_RAW:
 		return ads1158_write_average(st, val);
 	default:
@@ -486,30 +503,27 @@ static int ads1158_configure_regs_single_value(struct ads1158_state *st,
 		if (ret)
 			return ret;
 	} else {
-		if ((chan->scan_index / 8) == 1) {
+		if ((chan->scan_index / 8) == 1)
 			ret = regmap_set_bits(st->regmap, ADS1158_MUXSG_0,
 					      BIT(chan->scan_index % 8));
-		} else {
+		else
 			ret = regmap_write(st->regmap, ADS1158_MUXSG_0, 0);
-		}
 		if (ret)
 			return ret;
 
-		if ((chan->scan_index / 8) == 2) {
+		if ((chan->scan_index / 8) == 2)
 			ret = regmap_set_bits(st->regmap, ADS1158_MUXSG_1,
 					      BIT(chan->scan_index % 8));
-		} else {
+		else
 			ret = regmap_write(st->regmap, ADS1158_MUXSG_1, 0);
-		}
 		if (ret)
 			return ret;
 
-		if ((chan->scan_index / 8) == 3) {
+		if ((chan->scan_index / 8) == 3)
 			ret = regmap_set_bits(st->regmap, ADS1158_SYSRED,
 					      BIT(chan->scan_index % 8));
-		} else {
+		else
 			ret = regmap_write(st->regmap, ADS1158_SYSRED, 0);
-		}
 		if (ret)
 			return ret;
 	}
@@ -535,30 +549,48 @@ static int ads1158_read_single_value(struct iio_dev *indio_dev,
 	if (ret)
 		goto release;
 
-	ret = ads1158_read_data_rate(st, &buf);
+	buf = FIELD_PREP(ADS1158_CMD_MASK, PULSE_CONV_CMD);
+	ret = spi_write(st->spi, &buf, 1);
+	if (ret)
+		goto release;
+
+	ret = ads1158_read_data_rate(st, chan, &buf);
 	if (ret < 0)
 		goto release;
 
-	conversion_time_us = DIV_ROUND_UP(USEC_PER_SEC, st->data_rate[buf]);
+	conversion_time_us = DIV_ROUND_UP(USEC_PER_SEC, buf);
 	usleep_range(conversion_time_us, conversion_time_us * 2);
 
 	buf = FIELD_PREP(ADS1158_CMD_MASK, CHAN_DATA_READ_CMD) |
 	      BIT(ADS1158_CMD_MUL);
-	spi_write_then_read(st->spi, &buf, 1, rx_buf, 3);
+	ret = spi_write_then_read(st->spi, &buf, 1, rx_buf, 3);
+	if (ret)
+		goto release;
 
 release:
 	iio_device_release_direct_mode(indio_dev);
-
-	if (!ret)
+	if (ret)
 		return ret;
 
-	if ((rx_buf[0] &
-	     ~(BIT(ADS1158_STATUS_OVF) | BIT(ADS1158_STATUS_SUPPLY))) !=
-	    (BIT(ADS1158_STATUS_NEW) |
-	     FIELD_PREP(ADS1158_STATUS_CHID_MASK, chan->scan_index))) {
-		dev_err(indio_dev->dev.parent, "Invalid status byte (0x%02x)\n",
-			rx_buf[0]);
-		return -EIO;
+	ret = regmap_field_test_bits(st->regfields[ADS1158_REGF_MUXMOD], 1);
+	if (ret < 0)
+		return ret;
+
+	if (!ret) {
+		/* Sanity check for auto-scan mode. */
+		if ((rx_buf[0] &
+		     ~(BIT(ADS1158_STATUS_OVF) | BIT(ADS1158_STATUS_SUPPLY))) !=
+		    (BIT(ADS1158_STATUS_NEW) |
+		     FIELD_PREP(ADS1158_STATUS_CHID_MASK, chan->scan_index))) {
+			dev_err(indio_dev->dev.parent,
+				"Invalid status byte (0x%02x)\n", rx_buf[0]);
+			return -EIO;
+		}
+		if (rx_buf[0] & BIT(ADS1158_STATUS_OVF)) {
+			dev_err(indio_dev->dev.parent,
+				"Overflow detected (0x%02x)\n", rx_buf[0]);
+			return -ERANGE;
+		}
 	}
 	if (rx_buf[0] & BIT(ADS1158_STATUS_OVF))
 		dev_err(indio_dev->dev.parent, "Overflow detected (0x%02x)\n",
@@ -590,7 +622,7 @@ static int ads1158_read_raw(struct iio_dev *indio_dev,
 		ret = ads1158_scale(st, chan, val, val2);
 		break;
 	case IIO_CHAN_INFO_SAMP_FREQ:
-		ret = ads1158_read_data_rate(st, val);
+		ret = ads1158_read_data_rate(st, chan, val);
 		break;
 	case IIO_CHAN_INFO_AVERAGE_RAW:
 		ret = ads1158_read_average(st, val);
@@ -666,7 +698,6 @@ static int ads1158_probe(struct spi_device *spi)
 	const struct device_node *dn = dev_of_node(&spi->dev);
 	struct iio_dev *indio_dev;
 	struct ads1158_state *st;
-	u64 tmp;
 	size_t i;
 	int ret;
 	unsigned int buf;
@@ -726,18 +757,29 @@ static int ads1158_probe(struct spi_device *spi)
 	ret = of_property_read_u32(dn, "clock-frequency", &st->clock_frequency);
 	if (!ret) {
 		dev_dbg(indio_dev->dev.parent,
-			"Using default clock-frequency of %ul Hz\n",
+			"Using default clock-frequency of %u Hz\n",
+			st->clock_frequency);
+	} else {
+		dev_dbg(indio_dev->dev.parent,
+			"Using clock-frequency of %u Hz\n",
 			st->clock_frequency);
 	}
 	/* scale samling frequency */
-	for (i = 0; i < ARRAY_SIZE(st->data_rate); i++) {
-		tmp = ads1158_data_rate_fixed_chan[i];
-		tmp *= 16000000;
-		div_u64(tmp, st->clock_frequency);
-		st->data_rate[i] = tmp;
+	for (i = 0; i < ARRAY_SIZE(st->data_rate[0]); i++) {
+		buf = ads1158_data_rate[ADS1158_SCAN_FIXED][i];
+		buf *= (st->clock_frequency / KILO);
+		buf /= (16000000 / KILO);
+		st->data_rate[ADS1158_SCAN_FIXED][i] = buf;
+
+		buf = ads1158_data_rate[ADS1158_SCAN_AUTO][i];
+		buf *= (st->clock_frequency / KILO);
+		buf /= (16000000 / KILO);
+		st->data_rate[ADS1158_SCAN_AUTO][i] = buf;
 	}
-	if (of_property_read_bool(dn, "clock-ouput-enable")) {
-		ret = regmap_field_write(st->regfields[ADS1158_REGF_CLKENB], 1);
+	if (!of_property_read_bool(dn, "clock-output-enable")) {
+		dev_dbg(indio_dev->dev.parent, "disable clock output\n");
+
+		ret = regmap_field_write(st->regfields[ADS1158_REGF_CLKENB], 0);
 		if (ret)
 			return dev_err_probe(
 				indio_dev->dev.parent, ret,
