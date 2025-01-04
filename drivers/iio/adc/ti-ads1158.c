@@ -163,9 +163,12 @@ static const struct regmap_config ads1158_regmap_config = {
 		.indexed = 1, \
 		.channel = _chan, \
 		.info_mask_separate = BIT(IIO_CHAN_INFO_RAW) \
-				    | BIT(IIO_CHAN_INFO_SCALE), \
-		.info_mask_shared_by_type = BIT(IIO_CHAN_INFO_AVERAGE_RAW) \
-					  | BIT(IIO_CHAN_INFO_SAMP_FREQ), \
+				    | BIT(IIO_CHAN_INFO_SCALE) \
+				    | BIT(IIO_CHAN_INFO_SAMP_FREQ) \
+				    | BIT(IIO_CHAN_INFO_HARDWAREGAIN), \
+		.info_mask_shared_by_all = BIT(IIO_CHAN_INFO_AVERAGE_RAW), \
+		.info_mask_separate_available = BIT(IIO_CHAN_INFO_SAMP_FREQ), \
+		.info_mask_shared_by_all_available = BIT(IIO_CHAN_INFO_AVERAGE_RAW), \
 		.scan_index = _si, \
 		.scan_type = { \
 			.sign = 's', \
@@ -184,9 +187,12 @@ static const struct regmap_config ads1158_regmap_config = {
 		.channel2 = _chan_n, \
 		.differential = 1, \
 		.info_mask_separate = BIT(IIO_CHAN_INFO_RAW) \
-				    | BIT(IIO_CHAN_INFO_SCALE), \
-		.info_mask_shared_by_type = BIT(IIO_CHAN_INFO_AVERAGE_RAW) \
-					  | BIT(IIO_CHAN_INFO_SAMP_FREQ), \
+				    | BIT(IIO_CHAN_INFO_SCALE) \
+				    | BIT(IIO_CHAN_INFO_SAMP_FREQ) \
+				    | BIT(IIO_CHAN_INFO_HARDWAREGAIN), \
+		.info_mask_shared_by_all =  BIT(IIO_CHAN_INFO_AVERAGE_RAW), \
+		.info_mask_separate_available = BIT(IIO_CHAN_INFO_SAMP_FREQ), \
+		.info_mask_shared_by_all_available = BIT(IIO_CHAN_INFO_AVERAGE_RAW), \
 		.scan_index = _si, \
 		.scan_type = { \
 			.sign = 's', \
@@ -204,9 +210,12 @@ static const struct regmap_config ads1158_regmap_config = {
 		.channel2 = IIO_MOD_TEMP_OBJECT, \
 		.info_mask_separate = BIT(IIO_CHAN_INFO_RAW) \
 				    | BIT(IIO_CHAN_INFO_OFFSET) \
-				    | BIT(IIO_CHAN_INFO_SCALE), \
-		.info_mask_shared_by_type = BIT(IIO_CHAN_INFO_AVERAGE_RAW) \
-					  | BIT(IIO_CHAN_INFO_SAMP_FREQ), \
+				    | BIT(IIO_CHAN_INFO_SCALE) \
+				    | BIT(IIO_CHAN_INFO_SAMP_FREQ), \
+		.info_mask_shared_by_all = BIT(IIO_CHAN_INFO_CALIBSCALE) \
+					 | BIT(IIO_CHAN_INFO_AVERAGE_RAW), \
+		.info_mask_separate_available = BIT(IIO_CHAN_INFO_SAMP_FREQ), \
+		.info_mask_shared_by_all_available = BIT(IIO_CHAN_INFO_AVERAGE_RAW), \
 		.scan_index = _si, \
 		.scan_type = { \
 			.sign = 's', \
@@ -582,6 +591,23 @@ release:
 	return IIO_VAL_INT;
 }
 
+static int ads1158_read_hardwaregain(struct iio_dev *indio_dev, int *val,
+				   int *val2)
+{
+	static const struct iio_chan_spec chan = {
+		.scan_index = SI_GAIN,
+	};
+	int ret;
+
+	ret = ads1158_read_single_value(indio_dev, &chan, val2);
+	if (ret < 0)
+		return ret;
+
+	*val = 0x7800;
+
+	return IIO_VAL_FRACTIONAL;
+}
+
 static int ads1158_read_raw(struct iio_dev *indio_dev,
 			    struct iio_chan_spec const *chan, int *val,
 			    int *val2, long mask)
@@ -605,6 +631,9 @@ static int ads1158_read_raw(struct iio_dev *indio_dev,
 		break;
 	case IIO_CHAN_INFO_AVERAGE_RAW:
 		ret = ads1158_read_average(st, val);
+		break;
+	case IIO_CHAN_INFO_HARDWAREGAIN:
+		ret = ads1158_read_hardwaregain(indio_dev, val, val2);
 		break;
 	default:
 		ret = -EINVAL;
