@@ -129,15 +129,7 @@ static bool ads1158_volatile_register(struct device *dev, unsigned int reg)
 static bool ads1158_readable_register(struct device *dev, unsigned int reg)
 {
 	switch (reg) {
-	case ADS1158_CONFIG_0:
-	case ADS1158_CONFIG_1:
-	case ADS1158_MUXSCH:
-	case ADS1158_MUXDIF:
-	case ADS1158_MUXSG_0:
-	case ADS1158_MUXSG_1:
-	case ADS1158_SYSRED:
-	case ADS1158_GPIOD:
-	case ADS1158_ID:
+	case ADS1158_CONFIG_0 ... ADS1158_ID:
 		return true;
 	default:
 		return false;
@@ -383,30 +375,8 @@ static int ads1158_scale(struct ads1158_state *st,
 		*val = DIV_ROUND_CLOSEST(vref_uv, MICRO / MILLI);
 		*val2 = 0xc00;
 		return IIO_VAL_FRACTIONAL;
-	case SI_DIFF0:
-	case SI_DIFF1:
-	case SI_DIFF2:
-	case SI_DIFF3:
-	case SI_DIFF4:
-	case SI_DIFF5:
-	case SI_DIFF6:
-	case SI_DIFF7:
-	case SI_AIN0:
-	case SI_AIN1:
-	case SI_AIN2:
-	case SI_AIN3:
-	case SI_AIN4:
-	case SI_AIN5:
-	case SI_AIN6:
-	case SI_AIN7:
-	case SI_AIN8:
-	case SI_AIN9:
-	case SI_AIN10:
-	case SI_AIN11:
-	case SI_AIN12:
-	case SI_AIN13:
-	case SI_AIN14:
-	case SI_AIN15:
+	case SI_DIFF0 ... SI_AIN15:
+	case SI_OFFSET:
 		*val = DIV_ROUND_CLOSEST(vref_uv, MICRO / MILLI);
 		*val2 = 0x7800;
 		return IIO_VAL_FRACTIONAL;
