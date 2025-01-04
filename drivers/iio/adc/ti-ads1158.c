@@ -393,7 +393,7 @@ static int ads1158_scale(struct ads1158_state *st,
 		return IIO_VAL_FRACTIONAL;
 	case SI_TEMP:
 		*val = vref_uv;
-		*val2 = DIV_ROUND_CLOSEST(TEMP_COEFF_UV * 0x7800, 1000);
+		*val2 = DIV_ROUND_CLOSEST(TEMP_COEFF_UV * 0x7800, MILLI);
 		return IIO_VAL_FRACTIONAL;
 	default:
 		return -EINVAL;
@@ -403,7 +403,7 @@ static int ads1158_scale(struct ads1158_state *st,
 static int ads1158_offset(struct ads1158_state *st,
 			  struct iio_chan_spec const *chan, int *val, int *val2)
 {
-	int lsb, vref_uv;
+	int lsb_deci, vref_uv;
 
 	switch (chan->type) {
 	case IIO_TEMP:
@@ -411,11 +411,11 @@ static int ads1158_offset(struct ads1158_state *st,
 		if (vref_uv < 0)
 			return vref_uv;
 
-		lsb = DIV_ROUND_CLOSEST(vref_uv, 0x7800);
+		lsb_deci = DIV_ROUND_CLOSEST(vref_uv * DECI, 0x7800);
 		*val = 0;
-		*val -= DIV_ROUND_CLOSEST(TEMP_OFFSET_UV, lsb);
-		*val += DIV_ROUND_CLOSEST(TEMP_OFFSET_DEGREE * TEMP_COEFF_UV,
-					  lsb);
+		*val -= DIV_ROUND_CLOSEST(TEMP_OFFSET_UV * DECI, lsb_deci);
+		*val += DIV_ROUND_CLOSEST(
+			TEMP_OFFSET_DEGREE * TEMP_COEFF_UV * DECI, lsb_deci);
 		break;
 	default:
 		return -EINVAL;
