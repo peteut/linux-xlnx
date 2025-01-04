@@ -383,7 +383,7 @@ static int ads1158_scale(struct ads1158_state *st,
 	switch (chan->scan_index) {
 	case SI_VCC:
 	case SI_REF:
-		*val = DIV_ROUND_CLOSEST(vref_uv, MICRO / MILLI);
+		*val = MILLI;
 		*val2 = 0xc00;
 		return IIO_VAL_FRACTIONAL;
 	case SI_DIFF0 ... SI_AIN15:
