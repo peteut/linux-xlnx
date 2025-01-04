@@ -3,9 +3,6 @@
  * iio/adc/ti-ads1158.c
  * Copyright (C) 2024 Alain Péteut
  *
- * based on linux/drivers/iio/max1027.c
- * Copyright (C) 2014 Philippe Reynes
- *
  * ads1158.c
  *
  */
@@ -30,76 +27,76 @@ enum ads1158_cmd {
 	PULSE_CONV_CMD,
 	RESET_CMD = 0x6,
 };
-#define ADS1158_CMD_MASK GENMASK(7, 5)
-#define ADS1158_CMD_MUL 4
-#define ADS1158_CMD_ADDR_MASK GENMASK(3, 0)
+#define CMD_CMD_MASK GENMASK(7, 5)
+#define CMD_MUL 4
+#define CMD_ADDR_MASK GENMASK(3, 0)
 
 /* Status byte. */
-#define ADS1158_STATUS_NEW 7
-#define ADS1158_STATUS_OVF 6
-#define ADS1158_STATUS_SUPPLY 5
-#define ADS1158_STATUS_CHID_MASK GENMASK(4, 0)
+#define STATUS_NEW 7
+#define STATUS_OVF 6
+#define STATUS_SUPPLY 5
+#define STATUS_CHID_MASK GENMASK(4, 0)
 
 /* MUXSCH */
-#define ADS1158_AINP GENMASK(7, 4)
-#define ADS1158_AINN GENMASK(3, 0)
+#define MUXSCH_AINP_MASK GENMASK(7, 4)
+#define MUXSCH_AINN_MASK GENMASK(3, 0)
 
 /* Temperature sensor coefficient. */
-#define ADS1158_TEMP_COEFF_UV 563
+#define TEMP_COEFF_UV 563
 /* Temperature sensor offset [uV]. */
-#define ADS1158_TEMP_OFFSET_UV 168000
+#define TEMP_OFFSET_UV 168000
 /* Temperature sensor offset [°C]. */
-#define ADS1158_TEMP_OFFSET_DEGREE 25
+#define TEMP_OFFSET_DEGREE 25
 
 /* Registers. */
 enum ads1158_regs {
-	ADS1158_CONFIG_0 = 0x00,
-	ADS1158_CONFIG_1,
-	ADS1158_MUXSCH,
-	ADS1158_MUXDIF,
-	ADS1158_MUXSG_0,
-	ADS1158_MUXSG_1,
-	ADS1158_SYSRED,
-	ADS1158_GPIOC,
-	ADS1158_GPIOD,
-	ADS1158_ID,
-	ADS1158_REG_MAX,
+	REG_CONFIG_0 = 0x00,
+	REG_CONFIG_1,
+	REG_MUXSCH,
+	REG_MUXDIF,
+	REG_MUXSG_0,
+	REG_MUXSG_1,
+	REG_SYSRED,
+	REG_GPIOC,
+	REG_GPIOD,
+	REG_ID,
+	REG_MAX,
 };
 
 /* Register fields. */
 enum ads1158_regfield {
 	/* Mux mode. */
-	ADS1158_REGF_MUXMOD,
+	REGF_MUXMOD,
 	/* Clock output enable on CLKIO. */
-	ADS1158_REGF_CLKENB,
+	REGF_CLKENB,
 	/* Delay after indexing. */
-	ADS1158_REGF_DLY,
+	REGF_DLY,
 	/* Data rate. */
-	ADS1158_REGF_DR,
+	REGF_DR,
 	/* ID bit. */
-	ADS1158_REGF_IS_ADS1158,
-	ADS1158_REGF_MAX,
+	REGF_IS_ADS1158,
+	REGF_MAX,
 };
 
 static const struct reg_field ads1158_regfields[] = {
-	[ADS1158_REGF_MUXMOD] = REG_FIELD(ADS1158_CONFIG_0, 5, 5),
-	[ADS1158_REGF_CLKENB] = REG_FIELD(ADS1158_CONFIG_0, 3, 3),
-	[ADS1158_REGF_DLY] = REG_FIELD(ADS1158_CONFIG_1, 4, 6),
-	[ADS1158_REGF_DR] = REG_FIELD(ADS1158_CONFIG_1, 0, 1),
-	[ADS1158_REGF_IS_ADS1158] = REG_FIELD(ADS1158_ID, 4, 4),
+	[REGF_MUXMOD] = REG_FIELD(REG_CONFIG_0, 5, 5),
+	[REGF_CLKENB] = REG_FIELD(REG_CONFIG_0, 3, 3),
+	[REGF_DLY] = REG_FIELD(REG_CONFIG_1, 4, 6),
+	[REGF_DR] = REG_FIELD(REG_CONFIG_1, 0, 1),
+	[REGF_IS_ADS1158] = REG_FIELD(REG_ID, 4, 4),
 };
 
 static const int ads1158_data_rate_average[] = { 64, 16, 4, 1 };
 /* SPS for clock frequency of 16 MHz */
 
 enum ads1158_scan_mode {
-	ADS1158_SCAN_AUTO,
-	ADS1158_SCAN_FIXED,
-	ADS1158_SCAN_MAX,
+	SCAN_AUTO,
+	SCAN_FIXED,
+	SCAN_MAX,
 };
-static const int ads1158_data_rate[ADS1158_SCAN_MAX][4] = {
-	[ADS1158_SCAN_AUTO] = { 1831, 6168, 15123, 23739 },
-	[ADS1158_SCAN_FIXED] = { 1953, 7813, 31250, 125000 },
+static const int ads1158_data_rate[SCAN_MAX][4] = {
+	[SCAN_AUTO] = { 1831, 6168, 15123, 23739 },
+	[SCAN_FIXED] = { 1953, 7813, 31250, 125000 },
 };
 
 static const int ads1158_delay_us[] = { 0, 8, 16, 32, 64, 128, 256, 384 };
@@ -107,19 +104,19 @@ static const int ads1158_delay_us[] = { 0, 8, 16, 32, 64, 128, 256, 384 };
 struct ads1158_state {
 	struct spi_device *spi;
 	struct regmap *regmap;
-	struct regmap_field *regfields[ADS1158_REGF_MAX];
+	struct regmap_field *regfields[REGF_MAX];
 	struct regulator *vref;
 	struct mutex lock;
 
 	u32 clock_frequency;
-	int data_rate[ADS1158_SCAN_MAX][ARRAY_SIZE(ads1158_data_rate[0])];
+	int data_rate[SCAN_MAX][ARRAY_SIZE(ads1158_data_rate[0])];
 };
 
 static bool ads1158_volatile_register(struct device *dev, unsigned int reg)
 {
 	switch (reg) {
-	case ADS1158_GPIOD:
-	case ADS1158_ID:
+	case REG_GPIOD:
+	case REG_ID:
 		return true;
 	default:
 		return false;
@@ -129,21 +126,35 @@ static bool ads1158_volatile_register(struct device *dev, unsigned int reg)
 static bool ads1158_readable_register(struct device *dev, unsigned int reg)
 {
 	switch (reg) {
-	case ADS1158_CONFIG_0 ... ADS1158_ID:
+	case REG_CONFIG_0 ... REG_ID:
 		return true;
 	default:
 		return false;
 	}
 }
 
+static struct reg_default ads1158_reg_default[] = {
+	{ REG_CONFIG_0, 0x0a }, { REG_CONFIG_1, 0x83 }, { REG_MUXSCH, 0x00 },
+	{ REG_MUXDIF, 0x00 },	{ REG_MUXSG_0, 0xff },	{ REG_MUXSG_1, 0xff },
+	{ REG_SYSRED, 0x00 },	{ REG_GPIOC, 0xff },	{ REG_GPIOD, 0x00 },
+};
+
 static const struct regmap_config ads1158_regmap_config = {
 	.reg_bits = 8,
 	.val_bits = 8,
 	.volatile_reg = ads1158_volatile_register,
-	.max_register = ADS1158_REG_MAX,
+	.max_register = REG_MAX,
 	.readable_reg = ads1158_readable_register,
-	.read_flag_mask = FIELD_PREP_CONST(ADS1158_CMD_MASK, REG_READ_CMD),
-	.write_flag_mask = FIELD_PREP_CONST(ADS1158_CMD_MASK, REG_WRITE_CMD),
+	.read_flag_mask = FIELD_PREP_CONST(CMD_CMD_MASK, REG_READ_CMD),
+	.write_flag_mask = FIELD_PREP_CONST(CMD_CMD_MASK, REG_WRITE_CMD),
+	.use_single_read =
+		true, /* H/W supports it, requires MUL flag to be set. */
+	.use_single_write =
+		true, /* H/W supports it, requires MUL flag to be set. */
+	.reg_defaults = ads1158_reg_default,
+	.num_reg_defaults = ARRAY_SIZE(ads1158_reg_default),
+	.cache_type = REGCACHE_FLAT,
+	.can_sleep = true,
 };
 
 #define ADS1158_VOLTAGE_CHAN_IIO(_chan, _si, _name) \
@@ -273,11 +284,11 @@ static int ads1158_read_data_rate(struct ads1158_state *st,
 				  struct iio_chan_spec const *chan, int *val)
 {
 	unsigned int buf;
-	int *data_rate = st->data_rate[chan->differential ? ADS1158_SCAN_FIXED :
-							    ADS1158_SCAN_AUTO];
+	int *data_rate =
+		st->data_rate[chan->differential ? SCAN_FIXED : SCAN_AUTO];
 	int ret;
 
-	ret = regmap_field_read(st->regfields[ADS1158_REGF_DR], &buf);
+	ret = regmap_field_read(st->regfields[REGF_DR], &buf);
 	if (ret) {
 		dev_err(&st->spi->dev, "Could not read data rate (%d)\n", ret);
 		return ret;
@@ -292,8 +303,8 @@ static int ads1158_write_data_rate(struct ads1158_state *st,
 				   struct iio_chan_spec const *chan, int val)
 {
 	size_t i;
-	int *data_rate = st->data_rate[chan->differential ? ADS1158_SCAN_FIXED :
-							    ADS1158_SCAN_AUTO];
+	int *data_rate =
+		st->data_rate[chan->differential ? SCAN_FIXED : SCAN_AUTO];
 	int ret;
 
 	for (i = 0; i < ARRAY_SIZE(st->data_rate[0]); i++)
@@ -303,7 +314,7 @@ static int ads1158_write_data_rate(struct ads1158_state *st,
 	if (i == ARRAY_SIZE(st->data_rate[0]))
 		return -ERANGE;
 
-	ret = regmap_field_write(st->regfields[ADS1158_REGF_DR], i);
+	ret = regmap_field_write(st->regfields[REGF_DR], i);
 	if (ret) {
 		dev_err(&st->spi->dev, "Cound not write data rate (%d)\n", ret);
 		return ret;
@@ -317,7 +328,7 @@ static int ads1158_read_average(struct ads1158_state *st, int *val)
 	unsigned int buf;
 	int ret;
 
-	ret = regmap_field_read(st->regfields[ADS1158_REGF_DR], &buf);
+	ret = regmap_field_read(st->regfields[REGF_DR], &buf);
 	if (ret) {
 		dev_err(&st->spi->dev, "Could not read data rate (%d)\n", ret);
 		return ret;
@@ -339,7 +350,7 @@ static int ads1158_write_average(struct ads1158_state *st, int val)
 	if (i == ARRAY_SIZE(ads1158_data_rate_average))
 		return -ERANGE;
 
-	ret = regmap_field_write(st->regfields[ADS1158_REGF_DR], i);
+	ret = regmap_field_write(st->regfields[REGF_DR], i);
 	if (ret) {
 		dev_err(&st->spi->dev, "Could not write data rate (%d)\n", ret);
 		return ret;
@@ -382,7 +393,7 @@ static int ads1158_scale(struct ads1158_state *st,
 		return IIO_VAL_FRACTIONAL;
 	case SI_TEMP:
 		*val = vref_uv;
-		*val2 = DIV_ROUND_CLOSEST(ADS1158_TEMP_COEFF_UV * 0x7800, 1000);
+		*val2 = DIV_ROUND_CLOSEST(TEMP_COEFF_UV * 0x7800, 1000);
 		return IIO_VAL_FRACTIONAL;
 	default:
 		return -EINVAL;
@@ -402,9 +413,8 @@ static int ads1158_offset(struct ads1158_state *st,
 
 		lsb = DIV_ROUND_CLOSEST(vref_uv, 0x7800);
 		*val = 0;
-		*val -= DIV_ROUND_CLOSEST(ADS1158_TEMP_OFFSET_UV, lsb);
-		*val += DIV_ROUND_CLOSEST(ADS1158_TEMP_OFFSET_DEGREE *
-						  ADS1158_TEMP_COEFF_UV,
+		*val -= DIV_ROUND_CLOSEST(TEMP_OFFSET_UV, lsb);
+		*val += DIV_ROUND_CLOSEST(TEMP_OFFSET_DEGREE * TEMP_COEFF_UV,
 					  lsb);
 		break;
 	default:
@@ -420,8 +430,8 @@ static int ads1158_read_avail(struct iio_dev *indio_dev,
 			      long mask)
 {
 	struct ads1158_state *st = iio_priv(indio_dev);
-	int *data_rate = st->data_rate[chan->differential ? ADS1158_SCAN_FIXED :
-							    ADS1158_SCAN_AUTO];
+	int *data_rate =
+		st->data_rate[chan->differential ? SCAN_FIXED : SCAN_AUTO];
 
 	switch (mask) {
 	case IIO_CHAN_INFO_SAMP_FREQ:
@@ -460,40 +470,40 @@ static int ads1158_configure_regs_single_value(struct ads1158_state *st,
 {
 	int ret;
 
-	ret = regmap_field_write(st->regfields[ADS1158_REGF_MUXMOD],
+	ret = regmap_field_write(st->regfields[REGF_MUXMOD],
 				 chan->differential ? 1 : 0);
 	if (ret)
 		return ret;
 
 	if (chan->differential) {
-		ret = regmap_set_bits(st->regmap, ADS1158_MUXSCH,
-				      FIELD_PREP(ADS1158_AINP, chan->channel) |
-					      FIELD_PREP(ADS1158_AINN,
-							 chan->channel2));
+		ret = regmap_set_bits(
+			st->regmap, REG_MUXSCH,
+			FIELD_PREP(MUXSCH_AINP_MASK, chan->channel) |
+				FIELD_PREP(MUXSCH_AINN_MASK, chan->channel2));
 		if (ret)
 			return ret;
 	} else {
 		if ((chan->scan_index / 8) == 1)
-			ret = regmap_set_bits(st->regmap, ADS1158_MUXSG_0,
-					      BIT(chan->scan_index % 8));
+			ret = regmap_write(st->regmap, REG_MUXSG_0,
+					   BIT(chan->scan_index % 8));
 		else
-			ret = regmap_write(st->regmap, ADS1158_MUXSG_0, 0);
+			ret = regmap_write(st->regmap, REG_MUXSG_0, 0);
 		if (ret)
 			return ret;
 
 		if ((chan->scan_index / 8) == 2)
-			ret = regmap_set_bits(st->regmap, ADS1158_MUXSG_1,
-					      BIT(chan->scan_index % 8));
+			ret = regmap_write(st->regmap, REG_MUXSG_1,
+					   BIT(chan->scan_index % 8));
 		else
-			ret = regmap_write(st->regmap, ADS1158_MUXSG_1, 0);
+			ret = regmap_write(st->regmap, REG_MUXSG_1, 0);
 		if (ret)
 			return ret;
 
 		if ((chan->scan_index / 8) == 3)
-			ret = regmap_set_bits(st->regmap, ADS1158_SYSRED,
-					      BIT(chan->scan_index % 8));
+			ret = regmap_write(st->regmap, REG_SYSRED,
+					   BIT(chan->scan_index % 8));
 		else
-			ret = regmap_write(st->regmap, ADS1158_SYSRED, 0);
+			ret = regmap_write(st->regmap, REG_SYSRED, 0);
 		if (ret)
 			return ret;
 	}
@@ -519,7 +529,7 @@ static int ads1158_read_single_value(struct iio_dev *indio_dev,
 	if (ret)
 		goto release;
 
-	buf = FIELD_PREP(ADS1158_CMD_MASK, PULSE_CONV_CMD);
+	buf = FIELD_PREP(CMD_CMD_MASK, PULSE_CONV_CMD);
 	ret = spi_write(st->spi, &buf, 1);
 	if (ret)
 		goto release;
@@ -531,8 +541,7 @@ static int ads1158_read_single_value(struct iio_dev *indio_dev,
 	conversion_time_us = DIV_ROUND_UP(USEC_PER_SEC, buf);
 	usleep_range(conversion_time_us, conversion_time_us * 2);
 
-	buf = FIELD_PREP(ADS1158_CMD_MASK, CHAN_DATA_READ_CMD) |
-	      BIT(ADS1158_CMD_MUL);
+	buf = FIELD_PREP(CMD_CMD_MASK, CHAN_DATA_READ_CMD) | BIT(CMD_MUL);
 	ret = spi_write_then_read(st->spi, &buf, 1, rx_buf, 3);
 	if (ret)
 		goto release;
@@ -542,30 +551,30 @@ release:
 	if (ret)
 		return ret;
 
-	ret = regmap_field_test_bits(st->regfields[ADS1158_REGF_MUXMOD], 1);
+	ret = regmap_field_test_bits(st->regfields[REGF_MUXMOD], 1);
 	if (ret < 0)
 		return ret;
 
 	if (!ret) {
-		/* Sanity check for auto-scan mode. */
-		if ((rx_buf[0] &
-		     ~(BIT(ADS1158_STATUS_OVF) | BIT(ADS1158_STATUS_SUPPLY))) !=
-		    (BIT(ADS1158_STATUS_NEW) |
-		     FIELD_PREP(ADS1158_STATUS_CHID_MASK, chan->scan_index))) {
-			dev_err(indio_dev->dev.parent,
-				"Invalid status byte (0x%02x)\n", rx_buf[0]);
-			return -EIO;
-		}
-		if (rx_buf[0] & BIT(ADS1158_STATUS_OVF)) {
+		/* Sanity check, only applicable in auto-scan mode. */
+		if (rx_buf[0] & BIT(STATUS_OVF)) {
 			dev_err(indio_dev->dev.parent,
 				"Overflow detected (0x%02x)\n", rx_buf[0]);
 			return -ERANGE;
 		}
+		if (rx_buf[0] & BIT(STATUS_SUPPLY)) {
+			dev_err(indio_dev->dev.parent,
+				"Supply out of range (0x%02x)\n", rx_buf[0]);
+			return -ERANGE;
+		}
+		if ((rx_buf[0] & (BIT(STATUS_NEW) | STATUS_CHID_MASK)) !=
+		    (BIT(STATUS_NEW) |
+		     FIELD_PREP(STATUS_CHID_MASK, chan->scan_index))) {
+			dev_err(indio_dev->dev.parent,
+				"Invalid status byte (0x%02x)\n", rx_buf[0]);
+			return -EIO;
+		}
 	}
-	if (rx_buf[0] & BIT(ADS1158_STATUS_OVF))
-		dev_err(indio_dev->dev.parent, "Overflow detected (0x%02x)\n",
-			rx_buf[0]);
-	return -ERANGE;
 
 	memcpy(&data, &rx_buf[1], 2);
 	*val = be16_to_cpu(data);
@@ -692,7 +701,7 @@ static int ads1158_probe(struct spi_device *spi)
 		return dev_err_probe(&spi->dev, PTR_ERR(st->regmap),
 				     "Could not initialise regmap\n");
 
-	for (i = 0; i < ADS1158_REGF_MAX; i++) {
+	for (i = 0; i < REGF_MAX; i++) {
 		st->regfields[i] = devm_regmap_field_alloc(
 			indio_dev->dev.parent, st->regmap,
 			ads1158_regfields[i]);
@@ -716,7 +725,7 @@ static int ads1158_probe(struct spi_device *spi)
 		return dev_err_probe(indio_dev->dev.parent, PTR_ERR(st->vref),
 				     "Could not get regulator (%d)\n", ret);
 
-	buf = FIELD_PREP(ADS1158_CMD_MASK, RESET_CMD);
+	buf = FIELD_PREP(CMD_CMD_MASK, RESET_CMD);
 	ret = spi_write(spi, &buf, 1);
 	if (ret)
 		return dev_err_probe(indio_dev->dev.parent, ret,
@@ -736,33 +745,25 @@ static int ads1158_probe(struct spi_device *spi)
 	}
 	/* scale samling frequency */
 	for (i = 0; i < ARRAY_SIZE(st->data_rate[0]); i++) {
-		buf = ads1158_data_rate[ADS1158_SCAN_FIXED][i];
+		buf = ads1158_data_rate[SCAN_FIXED][i];
 		buf *= (st->clock_frequency / KILO);
 		buf /= (16000000 / KILO);
-		st->data_rate[ADS1158_SCAN_FIXED][i] = buf;
+		st->data_rate[SCAN_FIXED][i] = buf;
 
-		buf = ads1158_data_rate[ADS1158_SCAN_AUTO][i];
+		buf = ads1158_data_rate[SCAN_AUTO][i];
 		buf *= (st->clock_frequency / KILO);
 		buf /= (16000000 / KILO);
-		st->data_rate[ADS1158_SCAN_AUTO][i] = buf;
+		st->data_rate[SCAN_AUTO][i] = buf;
 	}
 	if (!of_property_read_bool(dn, "clock-output-enable")) {
 		dev_dbg(indio_dev->dev.parent, "disable clock output\n");
 
-		ret = regmap_field_write(st->regfields[ADS1158_REGF_CLKENB], 0);
+		ret = regmap_field_write(st->regfields[REGF_CLKENB], 0);
 		if (ret)
 			return dev_err_probe(
 				indio_dev->dev.parent, ret,
 				"Could not write clock enable (%d)\n", ret);
 	}
-
-	ret = regmap_field_test_bits(st->regfields[ADS1158_REGF_IS_ADS1158], 1);
-	if (ret < 0)
-		return dev_err_probe(indio_dev->dev.parent, -EIO,
-				     "Could not read ID register (%d)\n", ret);
-	if (ret == 0)
-		return dev_err_probe(indio_dev->dev.parent, -EINVAL,
-				     "Invalid ID\n");
 
 	return devm_iio_device_register(&spi->dev, indio_dev);
 }
