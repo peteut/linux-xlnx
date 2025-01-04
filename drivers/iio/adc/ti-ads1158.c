@@ -517,7 +517,7 @@ static int ads1158_read_single_value(struct iio_dev *indio_dev,
 	struct ads1158_state *st = iio_priv(indio_dev);
 	unsigned int buf;
 	u8 rx_buf[3];
-	__u16 data;
+	__be16 data;
 	unsigned int conversion_time_us;
 	int ret;
 
@@ -577,7 +577,7 @@ release:
 	}
 
 	memcpy(&data, &rx_buf[1], 2);
-	*val = be16_to_cpu(data);
+	*val = (__s16)be16_to_cpu(data);
 
 	return IIO_VAL_INT;
 }
