@@ -17,6 +17,7 @@
 #include <linux/iio/iio.h>
 #include <linux/iio/buffer.h>
 #include <linux/regulator/consumer.h>
+#include <linux/iio/sysfs.h>
 
 /* Command byte */
 enum ads1158_cmd {
@@ -87,18 +88,20 @@ static const struct reg_field ads1158_regfields[] = {
 };
 
 static const int ads1158_data_rate_average[] = { 64, 16, 4, 1 };
-/* SPS for clock frequency of 16 MHz */
 
 enum ads1158_scan_mode {
 	SCAN_AUTO,
 	SCAN_FIXED,
 	SCAN_MAX,
 };
+
+/* SPS for a clock frequency of 16 MHz. */
 static const int ads1158_data_rate[SCAN_MAX][4] = {
 	[SCAN_AUTO] = { 1831, 6168, 15123, 23739 },
 	[SCAN_FIXED] = { 1953, 7813, 31250, 125000 },
 };
 
+/* Channel switching delay for a clock frequency of 16 MHz */
 static const int ads1158_delay_us[] = { 0, 8, 16, 32, 64, 128, 256, 384 };
 
 struct ads1158_state {
@@ -110,6 +113,7 @@ struct ads1158_state {
 
 	u32 clock_frequency;
 	int data_rate[SCAN_MAX][ARRAY_SIZE(ads1158_data_rate[0])];
+	int chan_switching_delay_us[ARRAY_SIZE(ads1158_delay_us)];
 };
 
 static bool ads1158_volatile_register(struct device *dev, unsigned int reg)
@@ -321,7 +325,7 @@ static int ads1158_write_data_rate(struct ads1158_state *st,
 			break;
 
 	if (i == ARRAY_SIZE(st->data_rate[0]))
-		return -ERANGE;
+		return -EINVAL;
 
 	ret = regmap_field_write(st->regfields[REGF_DR], i);
 	if (ret) {
@@ -357,7 +361,7 @@ static int ads1158_write_average(struct ads1158_state *st, int val)
 			break;
 
 	if (i == ARRAY_SIZE(ads1158_data_rate_average))
-		return -ERANGE;
+		return -EINVAL;
 
 	ret = regmap_field_write(st->regfields[REGF_DR], i);
 	if (ret) {
@@ -548,6 +552,11 @@ static int ads1158_read_single_value(struct iio_dev *indio_dev,
 		goto release;
 
 	conversion_time_us = DIV_ROUND_UP(USEC_PER_SEC, buf);
+	ret = regmap_field_read(st->regfields[REGF_DLY], &buf);
+	if (ret)
+		goto release;
+
+	conversion_time_us += st->chan_switching_delay_us[buf];
 	usleep_range(conversion_time_us, conversion_time_us * 2);
 
 	buf = FIELD_PREP(CMD_CMD_MASK, CHAN_DATA_READ_CMD) | BIT(CMD_MUL);
@@ -592,7 +601,7 @@ release:
 }
 
 static int ads1158_read_hardwaregain(struct iio_dev *indio_dev, int *val,
-				   int *val2)
+				     int *val2)
 {
 	static const struct iio_chan_spec chan = {
 		.scan_index = SI_GAIN,
@@ -691,6 +700,84 @@ static int ads1158_fwnode_xlate(struct iio_dev *indio_dev,
 	return -EINVAL;
 }
 
+static ssize_t channel_switching_delay_show(struct device *dev,
+					    struct device_attribute *atttr,
+					    char *buf)
+{
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	struct ads1158_state *st = iio_priv(indio_dev);
+	unsigned int val;
+	int ret;
+
+	ret = regmap_field_read(st->regfields[REGF_DLY], &val);
+	if (ret)
+		return ret;
+
+	return sysfs_emit(buf, "%d\n", st->chan_switching_delay_us[val]);
+}
+
+static ssize_t channel_switching_delay_store(struct device *dev,
+					     struct device_attribute *attr,
+					     const char *buf, size_t len)
+{
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	struct ads1158_state *st = iio_priv(indio_dev);
+	long val;
+	size_t i;
+	int ret;
+
+	ret = kstrtol(buf, 10, &val);
+	if (ret)
+		return ret;
+
+	for (i = 0; i < ARRAY_SIZE(st->chan_switching_delay_us); i++)
+		if (val == st->chan_switching_delay_us[i])
+			break;
+
+	if (i == ARRAY_SIZE(st->chan_switching_delay_us))
+		return -EINVAL;
+
+	mutex_lock(&st->lock);
+	ret = regmap_field_write(st->regfields[REGF_DLY], i);
+	mutex_unlock(&st->lock);
+
+	if (ret)
+		return ret;
+
+	return len;
+}
+
+static IIO_DEVICE_ATTR_RW(channel_switching_delay, 0);
+
+static ssize_t channel_switching_delay_available_show(struct device *dev,
+					    struct device_attribute *atttr,
+					    char *buf)
+{
+	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
+	struct ads1158_state *st = iio_priv(indio_dev);
+	size_t i;
+	size_t len = 0;
+
+	for (i = 0; i < ARRAY_SIZE(st->chan_switching_delay_us); i++) {
+		len += sprintf(buf + len, "%d ", st->chan_switching_delay_us[i]);
+	}
+	len += sprintf(buf + len, "\n");
+
+	return len;
+}
+
+static IIO_DEVICE_ATTR_RO(channel_switching_delay_available, 0);
+
+static struct attribute *ads1158_attributes[] = {
+	&iio_dev_attr_channel_switching_delay.dev_attr.attr,
+	&iio_dev_attr_channel_switching_delay_available.dev_attr.attr,
+	NULL,
+};
+
+static const struct attribute_group ads1158_attribute_group = {
+	.attrs = ads1158_attributes,
+};
+
 static const struct iio_info ads1158_info = {
 	.read_avail = ads1158_read_avail,
 	.read_raw = ads1158_read_raw,
@@ -698,6 +785,7 @@ static const struct iio_info ads1158_info = {
 	.read_label = ads1158_read_label,
 	.debugfs_reg_access = ads1158_debugfs_reg_access,
 	.fwnode_xlate = ads1158_fwnode_xlate,
+	.attrs = &ads1158_attribute_group,
 };
 
 static int ads1158_probe(struct spi_device *spi)
@@ -783,6 +871,13 @@ static int ads1158_probe(struct spi_device *spi)
 		buf *= (st->clock_frequency / KILO);
 		buf /= (16000000 / KILO);
 		st->data_rate[SCAN_AUTO][i] = buf;
+	}
+	/* scale switching delay */
+	for (i = 0; i < ARRAY_SIZE(st->chan_switching_delay_us); i++) {
+		buf = ads1158_delay_us[i];
+		buf *= (16000000 / KILO);
+		buf /= (st->clock_frequency / KILO);
+		st->chan_switching_delay_us[i] = buf;
 	}
 	if (!of_property_read_bool(dn, "clock-output-enable")) {
 		dev_dbg(indio_dev->dev.parent, "disable clock output\n");
