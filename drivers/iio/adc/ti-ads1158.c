@@ -302,6 +302,8 @@ struct ads1158_state {
 	int chan_switching_delay_us[ARRAY_SIZE(ads1158_delay_us)];
 
 	int calibfactor[SI_MAX][CALIB_MAX];
+
+	const char *label[SI_MAX];
 };
 
 static int ads1158_read_data_rate(struct ads1158_state *st,
@@ -691,11 +693,45 @@ static int ads1158_write_raw(struct iio_dev *indio_dev,
 	}
 }
 
-static int ads1158_read_label(struct iio_dev *iio_dev,
+static int ads1158_set_chan_label(struct iio_dev *indio_dev)
+{
+	struct ads1158_state *st = iio_priv(indio_dev);
+	struct fwnode_handle *fwnode;
+	struct fwnode_handle *child;
+	const char *label;
+	u32 reg;
+
+	fwnode = dev_fwnode(indio_dev->dev.parent);
+	fwnode_for_each_child_node(fwnode, child) {
+		if (fwnode_property_read_u32(child, "reg", &reg))
+			continue;
+
+		switch (reg) {
+		case SI_DIFF0 ... SI_REF:
+			break;
+		default:
+			return -ERANGE;
+		}
+
+		if (fwnode_property_read_string(child, "label", &label)) {
+			st->label[reg] = NULL;
+			continue;
+		}
+		st->label[reg] = label;
+	}
+
+	return 0;
+}
+
+static int ads1158_read_label(struct iio_dev *indio_dev,
 			      const struct iio_chan_spec *chan, char *label)
 {
+	struct ads1158_state *st = iio_priv(indio_dev);
 	int ret;
 	char *name, *p;
+
+	if (st->label[chan->scan_index])
+		return sysfs_emit(label, "%s\n", st->label[chan->scan_index]);
 
 	name = kstrdup(chan->datasheet_name, GFP_KERNEL);
 	if (!name)
@@ -933,6 +969,12 @@ static int ads1158_probe(struct spi_device *spi)
 		st->calibfactor[i][CALIB_INT] = 1;
 		st->calibfactor[i][CALIB_MICRO] = 0;
 	}
+
+	ret = ads1158_set_chan_label(indio_dev);
+	if (ret)
+		return dev_err_probe(indio_dev->dev.parent, ret,
+				     "Invalid channel configuration (%d)\n",
+				     ret);
 
 	return devm_iio_device_register(&spi->dev, indio_dev);
 }
