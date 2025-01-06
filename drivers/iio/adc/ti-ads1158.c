@@ -296,13 +296,11 @@ struct ads1158_state {
 	struct regmap_field *regfields[REGF_MAX];
 	struct regulator *vref;
 	struct mutex lock;
-
 	u32 clock_frequency;
 	int data_rate[SCAN_MAX][ARRAY_SIZE(ads1158_data_rate[0])];
 	int chan_switching_delay_us[ARRAY_SIZE(ads1158_delay_us)];
-
 	int calibfactor[SI_MAX][CALIB_MAX];
-
+	unsigned int switching_delay_setting[SI_MAX];
 	const char *label[SI_MAX];
 };
 
@@ -482,6 +480,11 @@ static int ads1158_configure_regs_single_value(struct ads1158_state *st,
 
 	ret = regmap_field_write(st->regfields[REGF_MUXMOD],
 				 chan->differential ? 1 : 0);
+	if (ret)
+		return ret;
+
+	ret = regmap_field_write(st->regfields[REGF_DLY],
+				 st->switching_delay_setting[chan->scan_index]);
 	if (ret)
 		return ret;
 
@@ -693,36 +696,6 @@ static int ads1158_write_raw(struct iio_dev *indio_dev,
 	}
 }
 
-static int ads1158_set_chan_label(struct iio_dev *indio_dev)
-{
-	struct ads1158_state *st = iio_priv(indio_dev);
-	struct fwnode_handle *fwnode;
-	struct fwnode_handle *child;
-	const char *label;
-	u32 reg;
-
-	fwnode = dev_fwnode(indio_dev->dev.parent);
-	fwnode_for_each_child_node(fwnode, child) {
-		if (fwnode_property_read_u32(child, "reg", &reg))
-			continue;
-
-		switch (reg) {
-		case SI_DIFF0 ... SI_REF:
-			break;
-		default:
-			return -ERANGE;
-		}
-
-		if (fwnode_property_read_string(child, "label", &label)) {
-			st->label[reg] = NULL;
-			continue;
-		}
-		st->label[reg] = label;
-	}
-
-	return 0;
-}
-
 static int ads1158_read_label(struct iio_dev *indio_dev,
 			      const struct iio_chan_spec *chan, char *label)
 {
@@ -863,6 +836,94 @@ static const struct iio_info ads1158_info = {
 	.attrs = &ads1158_attribute_group,
 };
 
+static int ads1158_chan_init(struct iio_dev *indio_dev)
+{
+	struct ads1158_state *st = iio_priv(indio_dev);
+	struct iio_chan_spec *channels;
+	struct fwnode_handle *child;
+	u32 reg, delay_us;
+	const char *name;
+	unsigned int num_channels;
+	size_t i, channel_i;
+	int ret;
+
+	num_channels = device_get_child_node_count(indio_dev->dev.parent);
+	if (!num_channels) {
+		dev_err(indio_dev->dev.parent, "No channel found\n");
+		return -ENODATA;
+	}
+	channels = devm_kcalloc(indio_dev->dev.parent, num_channels,
+				sizeof(struct iio_chan_spec), GFP_KERNEL);
+	if (!channels)
+		return -ENOMEM;
+
+	channel_i = 0;
+	device_for_each_child_node(indio_dev->dev.parent, child) {
+		ret = fwnode_property_read_u32(child, "reg", &reg);
+		if (ret) {
+			dev_err(indio_dev->dev.parent,
+				"Missing channel index (%d)\n", ret);
+			return ret;
+		}
+
+		ret = fwnode_property_read_string(child, "label", &name);
+		/* label is optional */
+		if (ret && ret != -EINVAL) {
+			dev_err(indio_dev->dev.parent, "Invalid label (%d)\n",
+				ret);
+			break;
+		}
+		st->label[reg] = (!ret) ? name : NULL;
+
+		ret = fwnode_property_read_u32(child, "settling-time-us",
+					       &delay_us);
+		/* settling-time-us is optional */
+		if (ret && ret != -EINVAL) {
+			dev_err(indio_dev->dev.parent,
+				"Settling time, parsing failed (%d)\n", ret);
+			break;
+		}
+		if (ret) {
+			delay_us = 0;
+			ret = 0;
+		}
+
+		for (i = 0; i < ARRAY_SIZE(st->chan_switching_delay_us); i++) {
+			if (delay_us <= st->chan_switching_delay_us[i])
+				break;
+		}
+		if (i == ARRAY_SIZE(st->chan_switching_delay_us)) {
+			ret = -EINVAL;
+			dev_err(indio_dev->dev.parent,
+				"Invalid settling time (%d)\n", ret);
+			break;
+		}
+		st->switching_delay_setting[reg] = i;
+
+		for (i = 0; i < ARRAY_SIZE(ads1158_channels); i++) {
+			if (ads1158_channels[i].scan_index == reg)
+				break;
+		}
+		if (i == ARRAY_SIZE(ads1158_channels)) {
+			ret = -EINVAL;
+			dev_err(indio_dev->dev.parent,
+				"Invalid channel index (%d)\n", ret);
+			break;
+		}
+		memcpy(&channels[channel_i], &ads1158_channels[i],
+		       sizeof(struct iio_chan_spec));
+
+		channel_i++;
+	}
+	if (ret)
+		return ret;
+
+	indio_dev->num_channels = num_channels;
+	indio_dev->channels = channels;
+
+	return 0;
+}
+
 static int ads1158_probe(struct spi_device *spi)
 {
 	const struct spi_device_id *id = spi_get_device_id(spi);
@@ -885,8 +946,6 @@ static int ads1158_probe(struct spi_device *spi)
 	iio_device_set_parent(indio_dev, &spi->dev);
 	indio_dev->info = &ads1158_info;
 	indio_dev->modes = INDIO_DIRECT_MODE;
-	indio_dev->channels = ads1158_channels;
-	indio_dev->num_channels = ARRAY_SIZE(ads1158_channels);
 
 	st->regmap = devm_regmap_init_spi(spi, &ads1158_regmap_config);
 	if (IS_ERR(st->regmap))
@@ -970,10 +1029,10 @@ static int ads1158_probe(struct spi_device *spi)
 		st->calibfactor[i][CALIB_MICRO] = 0;
 	}
 
-	ret = ads1158_set_chan_label(indio_dev);
+	ret = ads1158_chan_init(indio_dev);
 	if (ret)
 		return dev_err_probe(indio_dev->dev.parent, ret,
-				     "Invalid channel configuration (%d)\n",
+				     "Could not initialise channels (%d)\n",
 				     ret);
 
 	return devm_iio_device_register(&spi->dev, indio_dev);
