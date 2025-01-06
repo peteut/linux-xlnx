@@ -104,18 +104,6 @@ static const int ads1158_data_rate[SCAN_MAX][4] = {
 /* Channel switching delay for a clock frequency of 16 MHz */
 static const int ads1158_delay_us[] = { 0, 8, 16, 32, 64, 128, 256, 384 };
 
-struct ads1158_state {
-	struct spi_device *spi;
-	struct regmap *regmap;
-	struct regmap_field *regfields[REGF_MAX];
-	struct regulator *vref;
-	struct mutex lock;
-
-	u32 clock_frequency;
-	int data_rate[SCAN_MAX][ARRAY_SIZE(ads1158_data_rate[0])];
-	int chan_switching_delay_us[ARRAY_SIZE(ads1158_delay_us)];
-};
-
 static bool ads1158_volatile_register(struct device *dev, unsigned int reg)
 {
 	switch (reg) {
@@ -169,7 +157,8 @@ static const struct regmap_config ads1158_regmap_config = {
 		.info_mask_separate = BIT(IIO_CHAN_INFO_RAW) \
 				    | BIT(IIO_CHAN_INFO_SCALE) \
 				    | BIT(IIO_CHAN_INFO_SAMP_FREQ) \
-				    | BIT(IIO_CHAN_INFO_HARDWAREGAIN), \
+				    | BIT(IIO_CHAN_INFO_HARDWAREGAIN) \
+				    | BIT(IIO_CHAN_INFO_CALIBSCALE), \
 		.info_mask_shared_by_all = BIT(IIO_CHAN_INFO_AVERAGE_RAW), \
 		.info_mask_separate_available = BIT(IIO_CHAN_INFO_SAMP_FREQ), \
 		.info_mask_shared_by_all_available = BIT(IIO_CHAN_INFO_AVERAGE_RAW), \
@@ -193,7 +182,8 @@ static const struct regmap_config ads1158_regmap_config = {
 		.info_mask_separate = BIT(IIO_CHAN_INFO_RAW) \
 				    | BIT(IIO_CHAN_INFO_SCALE) \
 				    | BIT(IIO_CHAN_INFO_SAMP_FREQ) \
-				    | BIT(IIO_CHAN_INFO_HARDWAREGAIN), \
+				    | BIT(IIO_CHAN_INFO_HARDWAREGAIN) \
+				    | BIT(IIO_CHAN_INFO_CALIBSCALE), \
 		.info_mask_shared_by_all =  BIT(IIO_CHAN_INFO_AVERAGE_RAW), \
 		.info_mask_separate_available = BIT(IIO_CHAN_INFO_SAMP_FREQ), \
 		.info_mask_shared_by_all_available = BIT(IIO_CHAN_INFO_AVERAGE_RAW), \
@@ -215,9 +205,9 @@ static const struct regmap_config ads1158_regmap_config = {
 		.info_mask_separate = BIT(IIO_CHAN_INFO_RAW) \
 				    | BIT(IIO_CHAN_INFO_OFFSET) \
 				    | BIT(IIO_CHAN_INFO_SCALE) \
-				    | BIT(IIO_CHAN_INFO_SAMP_FREQ), \
-		.info_mask_shared_by_all = BIT(IIO_CHAN_INFO_CALIBSCALE) \
-					 | BIT(IIO_CHAN_INFO_AVERAGE_RAW), \
+				    | BIT(IIO_CHAN_INFO_SAMP_FREQ) \
+				    | BIT(IIO_CHAN_INFO_CALIBSCALE), \
+		.info_mask_shared_by_all = BIT(IIO_CHAN_INFO_AVERAGE_RAW), \
 		.info_mask_separate_available = BIT(IIO_CHAN_INFO_SAMP_FREQ), \
 		.info_mask_shared_by_all_available = BIT(IIO_CHAN_INFO_AVERAGE_RAW), \
 		.scan_index = _si, \
@@ -260,6 +250,7 @@ enum ads1158_scan_si {
 	SI_TEMP,
 	SI_GAIN,
 	SI_REF,
+	SI_MAX,
 };
 
 static const struct iio_chan_spec ads1158_channels[] = {
@@ -291,6 +282,20 @@ static const struct iio_chan_spec ads1158_channels[] = {
 	ADS1158_VOLTAGE_CHAN_IIO(17, SI_VCC, "VCC"),
 	ADS1158_TEMP_CHAN_IIO(SI_TEMP, "TEMP"),
 	ADS1158_VOLTAGE_CHAN_IIO(18, SI_REF, "REF"),
+};
+
+struct ads1158_state {
+	struct spi_device *spi;
+	struct regmap *regmap;
+	struct regmap_field *regfields[REGF_MAX];
+	struct regulator *vref;
+	struct mutex lock;
+
+	u32 clock_frequency;
+	int data_rate[SCAN_MAX][ARRAY_SIZE(ads1158_data_rate[0])];
+	int chan_switching_delay_us[ARRAY_SIZE(ads1158_delay_us)];
+
+	int calibfactor[SI_MAX];
 };
 
 static int ads1158_read_data_rate(struct ads1158_state *st,
@@ -462,22 +467,6 @@ static int ads1158_read_avail(struct iio_dev *indio_dev,
 	}
 }
 
-static int ads1158_write_raw(struct iio_dev *indio_dev,
-			     struct iio_chan_spec const *chan, int val,
-			     int val2, long mask)
-{
-	struct ads1158_state *st = iio_priv(indio_dev);
-
-	switch (mask) {
-	case IIO_CHAN_INFO_SAMP_FREQ:
-		return ads1158_write_data_rate(st, chan, val);
-	case IIO_CHAN_INFO_AVERAGE_RAW:
-		return ads1158_write_average(st, val);
-	default:
-		return -EINVAL;
-	}
-}
-
 static int ads1158_configure_regs_single_value(struct ads1158_state *st,
 					       struct iio_chan_spec const *chan)
 {
@@ -537,7 +526,6 @@ static int ads1158_read_single_value(struct iio_dev *indio_dev,
 	ret = iio_device_claim_direct_mode(indio_dev);
 	if (ret)
 		return ret;
-
 	ret = ads1158_configure_regs_single_value(st, chan);
 	if (ret)
 		goto release;
@@ -617,6 +605,29 @@ static int ads1158_read_hardwaregain(struct iio_dev *indio_dev, int *val,
 	return IIO_VAL_FRACTIONAL;
 }
 
+static int ads1158_read_calibscale(struct ads1158_state *st,
+				   struct iio_chan_spec const *chan, int *val,
+				   int *val2)
+{
+	*val = st->calibfactor[chan->scan_index] / MICRO;
+	*val2 = st->calibfactor[chan->scan_index] % MICRO;
+
+	return IIO_VAL_INT_PLUS_MICRO;
+}
+
+static int ads1158_write_calibscale(struct ads1158_state *st,
+				    struct iio_chan_spec const *chan, int val,
+				    int val2)
+{
+	if (val < 0 || val2 < 0 || val2 >= MICRO) {
+		return -EINVAL;
+	}
+
+	st->calibfactor[chan->scan_index] = val * MICRO + val2;
+
+	return 0;
+}
+
 static int ads1158_read_raw(struct iio_dev *indio_dev,
 			    struct iio_chan_spec const *chan, int *val,
 			    int *val2, long mask)
@@ -644,12 +655,33 @@ static int ads1158_read_raw(struct iio_dev *indio_dev,
 	case IIO_CHAN_INFO_HARDWAREGAIN:
 		ret = ads1158_read_hardwaregain(indio_dev, val, val2);
 		break;
+	case IIO_CHAN_INFO_CALIBSCALE:
+		ret = ads1158_read_calibscale(st, chan, val, val2);
+		break;
 	default:
 		ret = -EINVAL;
 	}
 	mutex_unlock(&st->lock);
 
 	return ret;
+}
+
+static int ads1158_write_raw(struct iio_dev *indio_dev,
+			     struct iio_chan_spec const *chan, int val,
+			     int val2, long mask)
+{
+	struct ads1158_state *st = iio_priv(indio_dev);
+
+	switch (mask) {
+	case IIO_CHAN_INFO_SAMP_FREQ:
+		return ads1158_write_data_rate(st, chan, val);
+	case IIO_CHAN_INFO_AVERAGE_RAW:
+		return ads1158_write_average(st, val);
+	case IIO_CHAN_INFO_CALIBSCALE:
+		return ads1158_write_calibscale(st, chan, val, val2);
+	default:
+		return -EINVAL;
+	}
 }
 
 static int ads1158_read_label(struct iio_dev *iio_dev,
@@ -749,9 +781,8 @@ static ssize_t channel_switching_delay_store(struct device *dev,
 
 static IIO_DEVICE_ATTR_RW(channel_switching_delay, 0);
 
-static ssize_t channel_switching_delay_available_show(struct device *dev,
-					    struct device_attribute *atttr,
-					    char *buf)
+static ssize_t channel_switching_delay_available_show(
+	struct device *dev, struct device_attribute *atttr, char *buf)
 {
 	struct iio_dev *indio_dev = dev_to_iio_dev(dev);
 	struct ads1158_state *st = iio_priv(indio_dev);
@@ -759,7 +790,8 @@ static ssize_t channel_switching_delay_available_show(struct device *dev,
 	size_t len = 0;
 
 	for (i = 0; i < ARRAY_SIZE(st->chan_switching_delay_us); i++) {
-		len += sprintf(buf + len, "%d ", st->chan_switching_delay_us[i]);
+		len += sprintf(buf + len, "%d ",
+			       st->chan_switching_delay_us[i]);
 	}
 	len += sprintf(buf + len, "\n");
 
@@ -887,6 +919,11 @@ static int ads1158_probe(struct spi_device *spi)
 			return dev_err_probe(
 				indio_dev->dev.parent, ret,
 				"Could not write clock enable (%d)\n", ret);
+	}
+
+	/* init calibfactor to 1.0 */
+	for (i = 0; i < ARRAY_SIZE(st->calibfactor); i++) {
+		st->calibfactor[i] = 1 * MICRO;
 	}
 
 	return devm_iio_device_register(&spi->dev, indio_dev);
