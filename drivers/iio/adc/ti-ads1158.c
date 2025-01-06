@@ -284,6 +284,12 @@ static const struct iio_chan_spec ads1158_channels[] = {
 	ADS1158_VOLTAGE_CHAN_IIO(18, SI_REF, "REF"),
 };
 
+enum ads1158_calibfactor {
+	CALIB_INT,
+	CALIB_MICRO,
+	CALIB_MAX,
+};
+
 struct ads1158_state {
 	struct spi_device *spi;
 	struct regmap *regmap;
@@ -295,7 +301,7 @@ struct ads1158_state {
 	int data_rate[SCAN_MAX][ARRAY_SIZE(ads1158_data_rate[0])];
 	int chan_switching_delay_us[ARRAY_SIZE(ads1158_delay_us)];
 
-	int calibfactor[SI_MAX];
+	int calibfactor[SI_MAX][CALIB_MAX];
 };
 
 static int ads1158_read_data_rate(struct ads1158_state *st,
@@ -609,8 +615,8 @@ static int ads1158_read_calibscale(struct ads1158_state *st,
 				   struct iio_chan_spec const *chan, int *val,
 				   int *val2)
 {
-	*val = st->calibfactor[chan->scan_index] / MICRO;
-	*val2 = st->calibfactor[chan->scan_index] % MICRO;
+	*val = st->calibfactor[chan->scan_index][CALIB_INT];
+	*val2 = st->calibfactor[chan->scan_index][CALIB_MICRO];
 
 	return IIO_VAL_INT_PLUS_MICRO;
 }
@@ -619,11 +625,12 @@ static int ads1158_write_calibscale(struct ads1158_state *st,
 				    struct iio_chan_spec const *chan, int val,
 				    int val2)
 {
-	if (val < 0 || val2 < 0 || val2 >= MICRO) {
+	if (val2 < 0 || val2 >= MICRO) {
 		return -EINVAL;
 	}
 
-	st->calibfactor[chan->scan_index] = val * MICRO + val2;
+	st->calibfactor[chan->scan_index][CALIB_INT] = val;
+	st->calibfactor[chan->scan_index][CALIB_MICRO] = val2;
 
 	return 0;
 }
@@ -923,7 +930,8 @@ static int ads1158_probe(struct spi_device *spi)
 
 	/* init calibfactor to 1.0 */
 	for (i = 0; i < ARRAY_SIZE(st->calibfactor); i++) {
-		st->calibfactor[i] = 1 * MICRO;
+		st->calibfactor[i][CALIB_INT] = 1;
+		st->calibfactor[i][CALIB_MICRO] = 0;
 	}
 
 	return devm_iio_device_register(&spi->dev, indio_dev);
