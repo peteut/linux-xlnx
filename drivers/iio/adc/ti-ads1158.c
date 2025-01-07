@@ -135,7 +135,7 @@ static const struct regmap_config ads1158_regmap_config = {
 	.reg_bits = 8,
 	.val_bits = 8,
 	.volatile_reg = ads1158_volatile_register,
-	.max_register = REG_MAX,
+	.max_register = REG_MAX - 1,
 	.readable_reg = ads1158_readable_register,
 	.read_flag_mask = FIELD_PREP_CONST(CMD_CMD_MASK, REG_READ_CMD),
 	.write_flag_mask = FIELD_PREP_CONST(CMD_CMD_MASK, REG_WRITE_CMD),
@@ -741,7 +741,7 @@ static int ads1158_fwnode_xlate(struct iio_dev *indio_dev,
 	int i;
 
 	for (i = 0; i < indio_dev->num_channels; i++)
-		if (indio_dev->channels[i].scan_index)
+		if (indio_dev->channels[i].scan_index == iiospec->args[0])
 			return i;
 
 	return -EINVAL;
