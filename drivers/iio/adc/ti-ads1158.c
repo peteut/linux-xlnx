@@ -208,14 +208,11 @@ static ssize_t channel_switching_delay_read(struct iio_dev *indio_dev,
 					    char *buf)
 {
 	struct ads1158_state *st = iio_priv(indio_dev);
-	unsigned int val;
-	int ret;
 
-	ret = regmap_field_read(st->regfields[REGF_DLY], &val);
-	if (ret)
-		return ret;
-
-	return sysfs_emit(buf, "%d\n", st->chan_switching_delay_us[val]);
+	return sysfs_emit(
+		buf, "%d\n",
+		st->chan_switching_delay_us
+			[st->switching_delay_setting[chan->scan_index]]);
 }
 
 static ssize_t channel_switching_delay_write(struct iio_dev *indio_dev,
@@ -233,7 +230,7 @@ static ssize_t channel_switching_delay_write(struct iio_dev *indio_dev,
 		return ret;
 
 	for (i = 0; i < ARRAY_SIZE(st->chan_switching_delay_us); i++)
-		if (val == st->chan_switching_delay_us[i])
+		if (val <= st->chan_switching_delay_us[i])
 			break;
 
 	if (i == ARRAY_SIZE(st->chan_switching_delay_us))
@@ -806,7 +803,6 @@ static int ads1158_fwnode_xlate(struct iio_dev *indio_dev,
 
 	return -EINVAL;
 }
-
 
 static ssize_t channel_switching_delay_available_show(
 	struct device *dev, struct device_attribute *atttr, char *buf)
