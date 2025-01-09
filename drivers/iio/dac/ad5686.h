@@ -138,6 +138,7 @@ struct ad5686_state {
 	ad5686_read_func		read;
 	bool				use_internal_vref;
 	struct mutex			lock;
+	const char			*label[16];
 
 	/*
 	 * DMA (thus cache coherency maintenance) may require the
