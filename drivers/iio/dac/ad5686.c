@@ -13,16 +13,17 @@
 #include <linux/slab.h>
 #include <linux/sysfs.h>
 #include <linux/regulator/consumer.h>
+#include <linux/of.h>
 
 #include <linux/iio/iio.h>
 #include <linux/iio/sysfs.h>
 
 #include "ad5686.h"
 
-static const char * const ad5686_powerdown_modes[] = {
+static const char *const ad5686_powerdown_modes[] = {
 	"1kohm_to_gnd",
 	"100kohm_to_gnd",
-	"three_state"
+	"three_state",
 };
 
 static int ad5686_get_powerdown_mode(struct iio_dev *indio_dev,
@@ -53,19 +54,20 @@ static const struct iio_enum ad5686_powerdown_mode_enum = {
 };
 
 static ssize_t ad5686_read_dac_powerdown(struct iio_dev *indio_dev,
-		uintptr_t private, const struct iio_chan_spec *chan, char *buf)
+					 uintptr_t private,
+					 const struct iio_chan_spec *chan,
+					 char *buf)
 {
 	struct ad5686_state *st = iio_priv(indio_dev);
 
-	return sysfs_emit(buf, "%d\n", !!(st->pwr_down_mask &
-				       (0x3 << (chan->channel * 2))));
+	return sysfs_emit(buf, "%d\n",
+			  !!(st->pwr_down_mask & (0x3 << (chan->channel * 2))));
 }
 
 static ssize_t ad5686_write_dac_powerdown(struct iio_dev *indio_dev,
 					  uintptr_t private,
 					  const struct iio_chan_spec *chan,
-					  const char *buf,
-					  size_t len)
+					  const char *buf, size_t len)
 {
 	bool readin;
 	int ret;
@@ -110,17 +112,15 @@ static ssize_t ad5686_write_dac_powerdown(struct iio_dev *indio_dev,
 	if (!st->use_internal_vref)
 		val |= ref_bit_msk;
 
-	ret = st->write(st, AD5686_CMD_POWERDOWN_DAC,
-			address, val >> (address * 2));
+	ret = st->write(st, AD5686_CMD_POWERDOWN_DAC, address,
+			val >> (address * 2));
 
 	return ret ? ret : len;
 }
 
 static int ad5686_read_raw(struct iio_dev *indio_dev,
-			   struct iio_chan_spec const *chan,
-			   int *val,
-			   int *val2,
-			   long m)
+			   struct iio_chan_spec const *chan, int *val,
+			   int *val2, long m)
 {
 	struct ad5686_state *st = iio_priv(indio_dev);
 	int ret;
@@ -133,7 +133,7 @@ static int ad5686_read_raw(struct iio_dev *indio_dev,
 		if (ret < 0)
 			return ret;
 		*val = (ret >> chan->scan_type.shift) &
-			GENMASK(chan->scan_type.realbits - 1, 0);
+		       GENMASK(chan->scan_type.realbits - 1, 0);
 		return IIO_VAL_INT;
 	case IIO_CHAN_INFO_SCALE:
 		*val = st->vref_mv;
@@ -144,9 +144,7 @@ static int ad5686_read_raw(struct iio_dev *indio_dev,
 }
 
 static int ad5686_write_raw(struct iio_dev *indio_dev,
-			    struct iio_chan_spec const *chan,
-			    int val,
-			    int val2,
+			    struct iio_chan_spec const *chan, int val, int val2,
 			    long mask)
 {
 	struct ad5686_state *st = iio_priv(indio_dev);
@@ -158,10 +156,8 @@ static int ad5686_write_raw(struct iio_dev *indio_dev,
 			return -EINVAL;
 
 		mutex_lock(&st->lock);
-		ret = st->write(st,
-				AD5686_CMD_WRITE_INPUT_N_UPDATE_N,
-				chan->address,
-				val << chan->scan_type.shift);
+		ret = st->write(st, AD5686_CMD_WRITE_INPUT_N_UPDATE_N,
+				chan->address, val << chan->scan_type.shift);
 		mutex_unlock(&st->lock);
 		break;
 	default:
@@ -171,9 +167,21 @@ static int ad5686_write_raw(struct iio_dev *indio_dev,
 	return ret;
 }
 
+static int ad5686_read_label(struct iio_dev *indio_dev,
+			     const struct iio_chan_spec *chan, char *label)
+{
+	struct ad5686_state *st = iio_priv(indio_dev);
+
+	if (st->label[chan->address])
+		return sysfs_emit(label, "%s\n", st->label[chan->address]);
+
+	return sysfs_emit(label, "vout%lu\n", chan->address);
+}
+
 static const struct iio_info ad5686_info = {
 	.read_raw = ad5686_read_raw,
 	.write_raw = ad5686_write_raw,
+	.read_label = ad5686_read_label,
 };
 
 static const struct iio_chan_spec_ext_info ad5686_ext_info[] = {
@@ -184,11 +192,13 @@ static const struct iio_chan_spec_ext_info ad5686_ext_info[] = {
 		.shared = IIO_SEPARATE,
 	},
 	IIO_ENUM("powerdown_mode", IIO_SEPARATE, &ad5686_powerdown_mode_enum),
-	IIO_ENUM_AVAILABLE("powerdown_mode", IIO_SHARED_BY_TYPE, &ad5686_powerdown_mode_enum),
-	{ },
+	IIO_ENUM_AVAILABLE("powerdown_mode", IIO_SHARED_BY_TYPE,
+			   &ad5686_powerdown_mode_enum),
+	{},
 };
 
-#define AD5868_CHANNEL(chan, addr, bits, _shift) {		\
+#define AD5868_CHANNEL(chan, addr, bits, _shift) \
+	{							\
 		.type = IIO_VOLTAGE,				\
 		.indexed = 1,					\
 		.output = 1,					\
@@ -205,56 +215,56 @@ static const struct iio_chan_spec_ext_info ad5686_ext_info[] = {
 		.ext_info = ad5686_ext_info,			\
 }
 
-#define DECLARE_AD5693_CHANNELS(name, bits, _shift)		\
-static const struct iio_chan_spec name[] = {			\
-		AD5868_CHANNEL(0, 0, bits, _shift),		\
-}
+#define DECLARE_AD5693_CHANNELS(name, bits, _shift)  \
+	static const struct iio_chan_spec name[] = { \
+		AD5868_CHANNEL(0, 0, bits, _shift),  \
+	}
 
-#define DECLARE_AD5338_CHANNELS(name, bits, _shift)		\
-static const struct iio_chan_spec name[] = {			\
-		AD5868_CHANNEL(0, 1, bits, _shift),		\
-		AD5868_CHANNEL(1, 8, bits, _shift),		\
-}
+#define DECLARE_AD5338_CHANNELS(name, bits, _shift)  \
+	static const struct iio_chan_spec name[] = { \
+		AD5868_CHANNEL(0, 1, bits, _shift),  \
+		AD5868_CHANNEL(1, 8, bits, _shift),  \
+	}
 
-#define DECLARE_AD5686_CHANNELS(name, bits, _shift)		\
-static const struct iio_chan_spec name[] = {			\
-		AD5868_CHANNEL(0, 1, bits, _shift),		\
-		AD5868_CHANNEL(1, 2, bits, _shift),		\
-		AD5868_CHANNEL(2, 4, bits, _shift),		\
-		AD5868_CHANNEL(3, 8, bits, _shift),		\
-}
+#define DECLARE_AD5686_CHANNELS(name, bits, _shift)  \
+	static const struct iio_chan_spec name[] = { \
+		AD5868_CHANNEL(0, 1, bits, _shift),  \
+		AD5868_CHANNEL(1, 2, bits, _shift),  \
+		AD5868_CHANNEL(2, 4, bits, _shift),  \
+		AD5868_CHANNEL(3, 8, bits, _shift),  \
+	}
 
-#define DECLARE_AD5676_CHANNELS(name, bits, _shift)		\
-static const struct iio_chan_spec name[] = {			\
-		AD5868_CHANNEL(0, 0, bits, _shift),		\
-		AD5868_CHANNEL(1, 1, bits, _shift),		\
-		AD5868_CHANNEL(2, 2, bits, _shift),		\
-		AD5868_CHANNEL(3, 3, bits, _shift),		\
-		AD5868_CHANNEL(4, 4, bits, _shift),		\
-		AD5868_CHANNEL(5, 5, bits, _shift),		\
-		AD5868_CHANNEL(6, 6, bits, _shift),		\
-		AD5868_CHANNEL(7, 7, bits, _shift),		\
-}
+#define DECLARE_AD5676_CHANNELS(name, bits, _shift)  \
+	static const struct iio_chan_spec name[] = { \
+		AD5868_CHANNEL(0, 0, bits, _shift),  \
+		AD5868_CHANNEL(1, 1, bits, _shift),  \
+		AD5868_CHANNEL(2, 2, bits, _shift),  \
+		AD5868_CHANNEL(3, 3, bits, _shift),  \
+		AD5868_CHANNEL(4, 4, bits, _shift),  \
+		AD5868_CHANNEL(5, 5, bits, _shift),  \
+		AD5868_CHANNEL(6, 6, bits, _shift),  \
+		AD5868_CHANNEL(7, 7, bits, _shift),  \
+	}
 
-#define DECLARE_AD5679_CHANNELS(name, bits, _shift)		\
-static const struct iio_chan_spec name[] = {			\
-		AD5868_CHANNEL(0, 0, bits, _shift),		\
-		AD5868_CHANNEL(1, 1, bits, _shift),		\
-		AD5868_CHANNEL(2, 2, bits, _shift),		\
-		AD5868_CHANNEL(3, 3, bits, _shift),		\
-		AD5868_CHANNEL(4, 4, bits, _shift),		\
-		AD5868_CHANNEL(5, 5, bits, _shift),		\
-		AD5868_CHANNEL(6, 6, bits, _shift),		\
-		AD5868_CHANNEL(7, 7, bits, _shift),		\
-		AD5868_CHANNEL(8, 8, bits, _shift),		\
-		AD5868_CHANNEL(9, 9, bits, _shift),		\
-		AD5868_CHANNEL(10, 10, bits, _shift),		\
-		AD5868_CHANNEL(11, 11, bits, _shift),		\
-		AD5868_CHANNEL(12, 12, bits, _shift),		\
-		AD5868_CHANNEL(13, 13, bits, _shift),		\
-		AD5868_CHANNEL(14, 14, bits, _shift),		\
-		AD5868_CHANNEL(15, 15, bits, _shift),		\
-}
+#define DECLARE_AD5679_CHANNELS(name, bits, _shift)   \
+	static const struct iio_chan_spec name[] = {  \
+		AD5868_CHANNEL(0, 0, bits, _shift),   \
+		AD5868_CHANNEL(1, 1, bits, _shift),   \
+		AD5868_CHANNEL(2, 2, bits, _shift),   \
+		AD5868_CHANNEL(3, 3, bits, _shift),   \
+		AD5868_CHANNEL(4, 4, bits, _shift),   \
+		AD5868_CHANNEL(5, 5, bits, _shift),   \
+		AD5868_CHANNEL(6, 6, bits, _shift),   \
+		AD5868_CHANNEL(7, 7, bits, _shift),   \
+		AD5868_CHANNEL(8, 8, bits, _shift),   \
+		AD5868_CHANNEL(9, 9, bits, _shift),   \
+		AD5868_CHANNEL(10, 10, bits, _shift), \
+		AD5868_CHANNEL(11, 11, bits, _shift), \
+		AD5868_CHANNEL(12, 12, bits, _shift), \
+		AD5868_CHANNEL(13, 13, bits, _shift), \
+		AD5868_CHANNEL(14, 14, bits, _shift), \
+		AD5868_CHANNEL(15, 15, bits, _shift), \
+	}
 
 DECLARE_AD5693_CHANNELS(ad5310r_channels, 10, 2);
 DECLARE_AD5693_CHANNELS(ad5311r_channels, 10, 6);
@@ -447,8 +457,81 @@ static const struct ad5686_chip_info ad5686_chip_info_tbl[] = {
 	},
 };
 
-int ad5686_probe(struct device *dev,
-		 enum ad5686_supported_device_ids chip_type,
+static int ad5686_chan_init(struct iio_dev *indio_dev)
+{
+	struct ad5686_state *st = iio_priv(indio_dev);
+	struct iio_chan_spec *channels;
+	struct fwnode_handle *child;
+	u32 reg, delay_us;
+	const char *name;
+	unsigned int num_channels;
+	size_t i, channel_i;
+	int ret;
+
+	num_channels = device_get_child_node_count(indio_dev->dev.parent);
+	if (!num_channels) {
+		dev_err(indio_dev->dev.parent, "No channel found\n");
+		return -ENODATA;
+	}
+	channels = devm_kcalloc(indio_dev->dev.parent, num_channels,
+				sizeof(struct iio_chan_spec), GFP_KERNEL);
+	if (!channels)
+		return -ENOMEM;
+
+	channel_i = 0;
+	device_for_each_child_node(indio_dev->dev.parent, child) {
+		ret = fwnode_property_read_u32(child, "reg", &reg);
+		if (ret) {
+			dev_err(indio_dev->dev.parent,
+				"Missing channel index (%d)\n", ret);
+			return ret;
+		} else if (reg >= st->chip_info->num_channels) {
+			dev_err(indio_dev->dev.parent,
+				"Invalid channel index %d", reg);
+			return -ERANGE;
+		}
+
+		ret = fwnode_property_read_string(child, "label", &name);
+		/* label is optional */
+		if (ret && ret != -EINVAL) {
+			dev_err(indio_dev->dev.parent, "Invalid label (%d)\n",
+				ret);
+			break;
+		}
+		st->label[reg] = (!ret) ? name : NULL;
+
+		ret = fwnode_property_read_u32(child, "settling-time-us",
+					       &delay_us);
+		/* settling-time-us is optional */
+		if (ret && ret != -EINVAL) {
+			dev_err(indio_dev->dev.parent,
+				"Settling time, parsing failed (%d)\n", ret);
+			break;
+		}
+		if (ret) {
+			delay_us = 0;
+			ret = 0;
+		}
+
+		for (i = 0; i < st->chip_info->num_channels; i++) {
+			if (st->chip_info->channels[i].address == reg)
+				break;
+		}
+		memcpy(&channels[channel_i], &st->chip_info->channels[i],
+		       sizeof(struct iio_chan_spec));
+
+		channel_i++;
+	}
+	if (ret)
+		return ret;
+
+	indio_dev->num_channels = num_channels;
+	indio_dev->channels = channels;
+
+	return 0;
+}
+
+int ad5686_probe(struct device *dev, enum ad5686_supported_device_ids chip_type,
 		 const char *name, ad5686_write_func write,
 		 ad5686_read_func read)
 {
@@ -460,7 +543,7 @@ int ad5686_probe(struct device *dev,
 
 	indio_dev = devm_iio_device_alloc(dev, sizeof(*st));
 	if (indio_dev == NULL)
-		return  -ENOMEM;
+		return -ENOMEM;
 
 	st = iio_priv(indio_dev);
 	dev_set_drvdata(dev, indio_dev);
@@ -496,8 +579,8 @@ int ad5686_probe(struct device *dev,
 	indio_dev->name = name;
 	indio_dev->info = &ad5686_info;
 	indio_dev->modes = INDIO_DIRECT_MODE;
-	indio_dev->channels = st->chip_info->channels;
-	indio_dev->num_channels = st->chip_info->num_channels;
+
+	ad5686_chan_init(indio_dev);
 
 	mutex_init(&st->lock);
 
