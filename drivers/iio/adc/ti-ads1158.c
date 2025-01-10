@@ -264,9 +264,9 @@ static const struct iio_chan_spec_ext_info ads1158_ext_info[] = {
 		.info_mask_separate = BIT(IIO_CHAN_INFO_RAW) \
 				    | BIT(IIO_CHAN_INFO_SCALE) \
 				    | BIT(IIO_CHAN_INFO_SAMP_FREQ) \
-				    | BIT(IIO_CHAN_INFO_HARDWAREGAIN) \
 				    | BIT(IIO_CHAN_INFO_CALIBSCALE), \
-		.info_mask_shared_by_all = BIT(IIO_CHAN_INFO_AVERAGE_RAW), \
+		.info_mask_shared_by_all = BIT(IIO_CHAN_INFO_AVERAGE_RAW) \
+					 | BIT(IIO_CHAN_INFO_HARDWAREGAIN), \
 		.info_mask_separate_available = BIT(IIO_CHAN_INFO_SAMP_FREQ), \
 		.info_mask_shared_by_all_available = BIT(IIO_CHAN_INFO_AVERAGE_RAW), \
 		.ext_info = ads1158_ext_info, \
@@ -290,9 +290,9 @@ static const struct iio_chan_spec_ext_info ads1158_ext_info[] = {
 		.info_mask_separate = BIT(IIO_CHAN_INFO_RAW) \
 				    | BIT(IIO_CHAN_INFO_SCALE) \
 				    | BIT(IIO_CHAN_INFO_SAMP_FREQ) \
-				    | BIT(IIO_CHAN_INFO_HARDWAREGAIN) \
 				    | BIT(IIO_CHAN_INFO_CALIBSCALE), \
-		.info_mask_shared_by_all =  BIT(IIO_CHAN_INFO_AVERAGE_RAW), \
+		.info_mask_shared_by_all = BIT(IIO_CHAN_INFO_AVERAGE_RAW) \
+					 | BIT(IIO_CHAN_INFO_HARDWAREGAIN), \
 		.info_mask_separate_available = BIT(IIO_CHAN_INFO_SAMP_FREQ), \
 		.info_mask_shared_by_all_available = BIT(IIO_CHAN_INFO_AVERAGE_RAW), \
 		.ext_info = ads1158_ext_info, \
@@ -316,7 +316,8 @@ static const struct iio_chan_spec_ext_info ads1158_ext_info[] = {
 				    | BIT(IIO_CHAN_INFO_SCALE) \
 				    | BIT(IIO_CHAN_INFO_SAMP_FREQ) \
 				    | BIT(IIO_CHAN_INFO_CALIBSCALE), \
-		.info_mask_shared_by_all = BIT(IIO_CHAN_INFO_AVERAGE_RAW), \
+		.info_mask_shared_by_all = BIT(IIO_CHAN_INFO_AVERAGE_RAW) \
+					 | BIT(IIO_CHAN_INFO_HARDWAREGAIN), \
 		.info_mask_separate_available = BIT(IIO_CHAN_INFO_SAMP_FREQ), \
 		.info_mask_shared_by_all_available = BIT(IIO_CHAN_INFO_AVERAGE_RAW), \
 		.ext_info = ads1158_ext_info, \
