@@ -175,7 +175,7 @@ enum ads1158_scan_si {
 	SI_AIN14,
 	SI_AIN15,
 	SI_OFFSET,
-	SI_VCC = 26,
+	SI_VCC = 25,
 	SI_TEMP,
 	SI_GAIN,
 	SI_REF,
