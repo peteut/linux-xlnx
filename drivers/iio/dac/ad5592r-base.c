@@ -124,7 +124,7 @@ static int ad5592r_gpio_request(struct gpio_chip *chip, unsigned offset)
 	return 0;
 }
 
-static const char * const ad5592r_gpio_names[] = {
+static const char *const ad5592r_gpio_names[] = {
 	"GPIO0", "GPIO1", "GPIO2", "GPIO3", "GPIO4", "GPIO5", "GPIO6", "GPIO7",
 };
 
@@ -300,7 +300,8 @@ static int ad5592r_reset_channel_modes(struct ad5592r_state *st)
 }
 
 static int ad5592r_write_raw(struct iio_dev *iio_dev,
-	struct iio_chan_spec const *chan, int val, int val2, long mask)
+			     struct iio_chan_spec const *chan, int val,
+			     int val2, long mask)
 {
 	struct ad5592r_state *st = iio_priv(iio_dev);
 	int ret;
@@ -325,7 +326,7 @@ static int ad5592r_write_raw(struct iio_dev *iio_dev,
 			bool gain;
 
 			if (val == st->scale_avail[0][0] &&
-				val2 == st->scale_avail[0][1])
+			    val2 == st->scale_avail[0][1])
 				gain = false;
 			else if (val == st->scale_avail[1][0] &&
 				 val2 == st->scale_avail[1][1])
@@ -373,8 +374,8 @@ static int ad5592r_write_raw(struct iio_dev *iio_dev,
 }
 
 static int ad5592r_read_raw(struct iio_dev *iio_dev,
-			   struct iio_chan_spec const *chan,
-			   int *val, int *val2, long m)
+			    struct iio_chan_spec const *chan, int *val,
+			    int *val2, long m)
 {
 	struct ad5592r_state *st = iio_priv(iio_dev);
 	u16 read_val;
@@ -390,8 +391,9 @@ static int ad5592r_read_raw(struct iio_dev *iio_dev,
 				return ret;
 
 			if ((read_val >> 12 & 0x7) != (chan->channel & 0x7)) {
-				dev_err(st->dev, "Error while reading channel %u\n",
-						chan->channel);
+				dev_err(st->dev,
+					"Error while reading channel %u\n",
+					chan->channel);
 				return -EIO;
 			}
 
@@ -403,10 +405,10 @@ static int ad5592r_read_raw(struct iio_dev *iio_dev,
 			mutex_unlock(&st->lock);
 		}
 
-		dev_dbg(st->dev, "Channel %u read: 0x%04hX\n",
-				chan->channel, read_val);
+		dev_dbg(st->dev, "Channel %u read: 0x%04hX\n", chan->channel,
+			read_val);
 
-		*val = (int) read_val;
+		*val = (int)read_val;
 		return IIO_VAL_INT;
 	case IIO_CHAN_INFO_SCALE:
 		*val = ad5592r_get_vref(st);
@@ -422,10 +424,10 @@ static int ad5592r_read_raw(struct iio_dev *iio_dev,
 
 		if (chan->output)
 			mult = !!(st->cached_gp_ctrl &
-				AD5592R_REG_CTRL_DAC_RANGE);
+				  AD5592R_REG_CTRL_DAC_RANGE);
 		else
 			mult = !!(st->cached_gp_ctrl &
-				AD5592R_REG_CTRL_ADC_RANGE);
+				  AD5592R_REG_CTRL_ADC_RANGE);
 
 		mutex_unlock(&st->lock);
 
@@ -453,7 +455,8 @@ static int ad5592r_read_raw(struct iio_dev *iio_dev,
 }
 
 static int ad5592r_write_raw_get_fmt(struct iio_dev *indio_dev,
-				 struct iio_chan_spec const *chan, long mask)
+				     struct iio_chan_spec const *chan,
+				     long mask)
 {
 	switch (mask) {
 	case IIO_CHAN_INFO_SCALE:
@@ -466,35 +469,51 @@ static int ad5592r_write_raw_get_fmt(struct iio_dev *indio_dev,
 	return -EINVAL;
 }
 
+static int ad5592r_read_label(struct iio_dev *indio_dev,
+			      const struct iio_chan_spec *chan, char *label)
+{
+	struct ad5592r_state *st = iio_priv(indio_dev);
+
+	if (st->label[chan->channel])
+		return sysfs_emit(label, "%s\n", st->label[chan->channel]);
+
+	if (chan->type == IIO_TEMP)
+		return sysfs_emit(label, "temp\n");
+
+	return sysfs_emit(label, "i/o%d\n", chan->channel);
+}
+
 static const struct iio_info ad5592r_info = {
 	.read_raw = ad5592r_read_raw,
 	.write_raw = ad5592r_write_raw,
 	.write_raw_get_fmt = ad5592r_write_raw_get_fmt,
+	.read_label = ad5592r_read_label,
 };
 
 static ssize_t ad5592r_show_scale_available(struct iio_dev *iio_dev,
-					   uintptr_t private,
-					   const struct iio_chan_spec *chan,
-					   char *buf)
+					    uintptr_t private,
+					    const struct iio_chan_spec *chan,
+					    char *buf)
 {
 	struct ad5592r_state *st = iio_priv(iio_dev);
 
-	return sprintf(buf, "%d.%09u %d.%09u\n",
-		st->scale_avail[0][0], st->scale_avail[0][1],
-		st->scale_avail[1][0], st->scale_avail[1][1]);
+	return sprintf(buf, "%d.%09u %d.%09u\n", st->scale_avail[0][0],
+		       st->scale_avail[0][1], st->scale_avail[1][0],
+		       st->scale_avail[1][1]);
 }
 
 static const struct iio_chan_spec_ext_info ad5592r_ext_info[] = {
 	{
-	 .name = "scale_available",
-	 .read = ad5592r_show_scale_available,
-	 .shared = IIO_SHARED_BY_TYPE,
-	 },
+		.name = "scale_available",
+		.read = ad5592r_show_scale_available,
+		.shared = IIO_SHARED_BY_TYPE,
+	},
 	{},
 };
 
 static void ad5592r_setup_channel(struct iio_dev *iio_dev,
-		struct iio_chan_spec *chan, bool output, unsigned id)
+				  struct iio_chan_spec *chan, bool output,
+				  unsigned id)
 {
 	chan->type = IIO_VOLTAGE;
 	chan->indexed = 1;
@@ -511,17 +530,21 @@ static void ad5592r_setup_channel(struct iio_dev *iio_dev,
 static int ad5592r_alloc_channels(struct iio_dev *iio_dev)
 {
 	struct ad5592r_state *st = iio_priv(iio_dev);
-	unsigned i, curr_channel = 0,
-		 num_channels = st->num_channels;
+	unsigned i, curr_channel = 0, num_channels = st->num_channels;
 	struct iio_chan_spec *channels;
 	struct fwnode_handle *child;
+	const char *name;
 	u32 reg, tmp;
 	int ret;
 
 	device_for_each_child_node(st->dev, child) {
 		ret = fwnode_property_read_u32(child, "reg", &reg);
-		if (ret || reg >= ARRAY_SIZE(st->channel_modes))
+		if (ret || reg >= ARRAY_SIZE(st->channel_modes)) {
+			if (reg == 8)
+				goto handle_label;
+
 			continue;
+		}
 
 		ret = fwnode_property_read_u32(child, "adi,mode", &tmp);
 		if (!ret)
@@ -530,11 +553,19 @@ static int ad5592r_alloc_channels(struct iio_dev *iio_dev)
 		ret = fwnode_property_read_u32(child, "adi,off-state", &tmp);
 		if (!ret)
 			st->channel_offstate[reg] = tmp;
+
+handle_label:
+		ret = fwnode_property_read_string(child, "label", &name);
+		/* label is optional */
+		if (ret && ret != -EINVAL) {
+			dev_err(st->dev, "Invalid label (%d)\n", ret);
+			break;
+		}
+		st->label[reg] = (!ret) ? name : NULL;
 	}
 
-	channels = devm_kcalloc(st->dev,
-			1 + 2 * num_channels, sizeof(*channels),
-			GFP_KERNEL);
+	channels = devm_kcalloc(st->dev, 1 + 2 * num_channels,
+				sizeof(*channels), GFP_KERNEL);
 	if (!channels)
 		return -ENOMEM;
 
@@ -542,22 +573,22 @@ static int ad5592r_alloc_channels(struct iio_dev *iio_dev)
 		switch (st->channel_modes[i]) {
 		case CH_MODE_DAC:
 			ad5592r_setup_channel(iio_dev, &channels[curr_channel],
-					true, i);
+					      true, i);
 			curr_channel++;
 			break;
 
 		case CH_MODE_ADC:
 			ad5592r_setup_channel(iio_dev, &channels[curr_channel],
-					false, i);
+					      false, i);
 			curr_channel++;
 			break;
 
 		case CH_MODE_DAC_AND_ADC:
 			ad5592r_setup_channel(iio_dev, &channels[curr_channel],
-					true, i);
+					      true, i);
 			curr_channel++;
 			ad5592r_setup_channel(iio_dev, &channels[curr_channel],
-					false, i);
+					      false, i);
 			curr_channel++;
 			break;
 
@@ -569,8 +600,8 @@ static int ad5592r_alloc_channels(struct iio_dev *iio_dev)
 	channels[curr_channel].type = IIO_TEMP;
 	channels[curr_channel].channel = 8;
 	channels[curr_channel].info_mask_separate = BIT(IIO_CHAN_INFO_RAW) |
-				   BIT(IIO_CHAN_INFO_SCALE) |
-				   BIT(IIO_CHAN_INFO_OFFSET);
+						    BIT(IIO_CHAN_INFO_SCALE) |
+						    BIT(IIO_CHAN_INFO_OFFSET);
 	curr_channel++;
 
 	iio_dev->num_channels = curr_channel;
@@ -590,7 +621,7 @@ static void ad5592r_init_scales(struct ad5592r_state *st, int vref_mV)
 }
 
 int ad5592r_probe(struct device *dev, const char *name,
-		const struct ad5592r_rw_ops *ops)
+		  const struct ad5592r_rw_ops *ops)
 {
 	struct iio_dev *iio_dev;
 	struct ad5592r_state *st;
@@ -631,7 +662,7 @@ int ad5592r_probe(struct device *dev, const char *name,
 		goto error_disable_reg;
 
 	ret = ops->reg_write(st, AD5592R_REG_PD,
-		     (st->reg == NULL) ? AD5592R_REG_PD_EN_REF : 0);
+			     (st->reg == NULL) ? AD5592R_REG_PD_EN_REF : 0);
 	if (ret)
 		goto error_disable_reg;
 

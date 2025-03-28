@@ -58,6 +58,7 @@ struct ad5592r_state {
 	unsigned int num_channels;
 	const struct ad5592r_rw_ops *ops;
 	int scale_avail[2][2];
+	const char *label[8 + 1];
 	u16 cached_dac[8];
 	u16 cached_gp_ctrl;
 	u8 channel_modes[8];
