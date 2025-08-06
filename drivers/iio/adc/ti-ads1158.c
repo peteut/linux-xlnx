@@ -13,6 +13,7 @@
 #include <linux/spi/spi.h>
 #include <linux/regmap.h>
 #include <linux/units.h>
+#include <asm/unaligned.h>
 
 #include <linux/iio/iio.h>
 #include <linux/iio/buffer.h>
@@ -74,6 +75,8 @@ enum ads1158_regfield {
 	REGF_DLY,
 	/* Data rate. */
 	REGF_DR,
+	/* Idle mode. */
+	REGF_IDLMOD,
 	/* ID bit. */
 	REGF_IS_ADS1158,
 	REGF_MAX,
@@ -84,6 +87,7 @@ static const struct reg_field ads1158_regfields[] = {
 	[REGF_CLKENB] = REG_FIELD(REG_CONFIG_0, 3, 3),
 	[REGF_DLY] = REG_FIELD(REG_CONFIG_1, 4, 6),
 	[REGF_DR] = REG_FIELD(REG_CONFIG_1, 0, 1),
+	[REGF_IDLMOD] = REG_FIELD(REG_CONFIG_1, 7, 7),
 	[REGF_IS_ADS1158] = REG_FIELD(REG_ID, 4, 4),
 };
 
@@ -103,6 +107,12 @@ static const int ads1158_data_rate[SCAN_MAX][4] = {
 
 /* Channel switching delay for a clock frequency of 16 MHz */
 static const int ads1158_delay_us[] = { 0, 8, 16, 32, 64, 128, 256, 384 };
+
+/* Initial delay (standby mode, default) [clock cycles]. */
+static const int ads1158_initial_delay[SCAN_MAX][4] = {
+	[SCAN_AUTO] = { 8772, 2628, 1092, 708 },
+	[SCAN_FIXED] = { 8866, 2722, 1186, 802 },
+};
 
 static bool ads1158_volatile_register(struct device *dev, unsigned int reg)
 {
@@ -131,6 +141,16 @@ static struct reg_default ads1158_reg_default[] = {
 	{ REG_SYSRED, 0x00 },	{ REG_GPIOC, 0xff },	{ REG_GPIOD, 0x00 },
 };
 
+static int ads1158_reg_format_read(struct spi_device *spi, u8 command,
+				   void *rxbuf, unsigned n_rx);
+
+static int ads1158_reg_read(void *context, unsigned int reg, unsigned int *val)
+{
+	struct spi_device *spi = context;
+
+	return ads1158_reg_format_read(spi, reg, val, 1);
+}
+
 static const struct regmap_config ads1158_regmap_config = {
 	.reg_bits = 8,
 	.val_bits = 8,
@@ -144,6 +164,7 @@ static const struct regmap_config ads1158_regmap_config = {
 	.use_single_write =
 		true, /* H/W supports it, requires MUL flag to be set. */
 	.reg_defaults = ads1158_reg_default,
+	.reg_read = ads1158_reg_read,
 	.num_reg_defaults = ARRAY_SIZE(ads1158_reg_default),
 	.cache_type = REGCACHE_FLAT,
 	.can_sleep = true,
@@ -581,13 +602,67 @@ static int ads1158_configure_regs_single_value(struct ads1158_state *st,
 	return 0;
 }
 
+static unsigned int clock_cycles_to_us(u32 clock_frequency,
+				       unsigned int clock_cycles)
+{
+	return DIV_ROUND_UP((u64)MEGA * clock_cycles, clock_frequency);
+}
+
+/* Portable code must never pass more than 32 bytes */
+#define SPI_BUFSIZ max(32, SMP_CACHE_BYTES)
+
+static u8 *buf;
+
+/**
+ * Due to ADS1158's SPI™ Timeout Function we cannot use spi_write_then_read(),
+ * which may cause delays due to split Tx and Rx transfers.
+ */
+static int ads1158_reg_format_read(struct spi_device *spi, u8 command,
+				   void *rxbuf, unsigned n_rx)
+{
+	static DEFINE_MUTEX(lock);
+
+	struct spi_message message;
+	struct spi_transfer x;
+	u8 *local_buf;
+	int ret;
+
+	if ((1 + n_rx) > SPI_BUFSIZ || !mutex_trylock(&lock)) {
+		local_buf = kmalloc(max((unsigned)SPI_BUFSIZ, 1 + n_rx),
+				    GFP_KERNEL | GFP_DMA);
+		if (!local_buf)
+			return -ENOMEM;
+	} else {
+		local_buf = buf;
+	}
+
+	spi_message_init(&message);
+	memset(&x, 0, sizeof(x));
+	x.len = 1 + n_rx;
+	local_buf[0] = command;
+	x.tx_buf = local_buf;
+	x.rx_buf = local_buf;
+	spi_message_add_tail(&x, &message);
+
+	/* Do the I/O */
+	ret = spi_sync(spi, &message);
+	if (!ret)
+		memcpy(rxbuf, x.rx_buf + 1, n_rx);
+
+	if (x.tx_buf == buf)
+		mutex_unlock(&lock);
+	else
+		kfree(local_buf);
+
+	return ret;
+}
+
 static int ads1158_read_single_value(struct iio_dev *indio_dev,
 				     struct iio_chan_spec const *chan, int *val)
 {
 	struct ads1158_state *st = iio_priv(indio_dev);
 	unsigned int buf;
 	u8 rx_buf[3];
-	__be16 data;
 	unsigned int conversion_time_us;
 	int ret;
 
@@ -603,20 +678,20 @@ static int ads1158_read_single_value(struct iio_dev *indio_dev,
 	if (ret)
 		goto release;
 
-	ret = ads1158_read_data_rate(st, chan, &buf);
-	if (ret < 0)
-		goto release;
-
-	conversion_time_us = DIV_ROUND_UP(USEC_PER_SEC, buf);
-	ret = regmap_field_read(st->regfields[REGF_DLY], &buf);
+	ret = regmap_field_read(st->regfields[REGF_DR], &buf);
 	if (ret)
 		goto release;
 
-	conversion_time_us += st->chan_switching_delay_us[buf];
+	conversion_time_us = clock_cycles_to_us(
+		st->clock_frequency, ads1158_initial_delay[SCAN_AUTO][buf]);
 	usleep_range(conversion_time_us, conversion_time_us * 2);
 
 	buf = FIELD_PREP(CMD_CMD_MASK, CHAN_DATA_READ_CMD) | BIT(CMD_MUL);
-	ret = spi_write_then_read(st->spi, &buf, 1, rx_buf, 3);
+
+	ret = ads1158_reg_format_read(
+		st->spi,
+		FIELD_PREP(CMD_CMD_MASK, CHAN_DATA_READ_CMD) | BIT(CMD_MUL),
+		rx_buf, sizeof(rx_buf));
 	if (ret)
 		goto release;
 
@@ -631,6 +706,17 @@ release:
 
 	if (!ret) {
 		/* Sanity check, only applicable in auto-scan mode. */
+		if (!(rx_buf[0] & BIT(STATUS_NEW))) {
+			dev_err(indio_dev->dev.parent, "No new data (0x%02x)\n",
+				rx_buf[0]);
+			return -EIO;
+		}
+		if ((rx_buf[0] & (STATUS_CHID_MASK)) !=
+		    FIELD_PREP(STATUS_CHID_MASK, chan->scan_index)) {
+			dev_err(indio_dev->dev.parent,
+				"Invalid channel (0x%02x)\n", rx_buf[0]);
+			return -EIO;
+		}
 		if (rx_buf[0] & BIT(STATUS_OVF)) {
 			dev_err(indio_dev->dev.parent,
 				"Overflow detected (0x%02x)\n", rx_buf[0]);
@@ -641,17 +727,9 @@ release:
 				"Supply out of range (0x%02x)\n", rx_buf[0]);
 			return -ERANGE;
 		}
-		if ((rx_buf[0] & (BIT(STATUS_NEW) | STATUS_CHID_MASK)) !=
-		    (BIT(STATUS_NEW) |
-		     FIELD_PREP(STATUS_CHID_MASK, chan->scan_index))) {
-			dev_err(indio_dev->dev.parent,
-				"Invalid status byte (0x%02x)\n", rx_buf[0]);
-			return -EIO;
-		}
 	}
 
-	memcpy(&data, &rx_buf[1], 2);
-	*val = (__s16)be16_to_cpu(data);
+	*val = (__s16)get_unaligned_be16(&rx_buf[1]);
 
 	return IIO_VAL_INT;
 }
@@ -1000,7 +1078,7 @@ static int ads1158_probe(struct spi_device *spi)
 			"Using clock-frequency of %u Hz\n",
 			st->clock_frequency);
 	}
-	/* scale samling frequency */
+	/* scale sampling frequency */
 	for (i = 0; i < ARRAY_SIZE(st->data_rate[0]); i++) {
 		buf = ads1158_data_rate[SCAN_FIXED][i];
 		buf *= (st->clock_frequency / KILO);
@@ -1019,6 +1097,7 @@ static int ads1158_probe(struct spi_device *spi)
 		buf /= (st->clock_frequency / KILO);
 		st->chan_switching_delay_us[i] = buf;
 	}
+
 	if (!of_property_read_bool(dn, "clock-output-enable")) {
 		dev_dbg(indio_dev->dev.parent, "disable clock output\n");
 
@@ -1027,6 +1106,14 @@ static int ads1158_probe(struct spi_device *spi)
 			return dev_err_probe(
 				indio_dev->dev.parent, ret,
 				"Could not write clock enable (%d)\n", ret);
+	}
+
+	/* Set idle mode to standby. */
+	ret = regmap_field_write(st->regfields[REGF_IDLMOD], 0);
+	if (ret) {
+		dev_err_probe(indio_dev->dev.parent, ret,
+			      "Could not write idle mode (%d)\n", ret);
+		return ret;
 	}
 
 	/* init calibfactor to 1.0 */
@@ -1065,7 +1152,23 @@ static struct spi_driver ads1158_driver = {
 	.probe = ads1158_probe,
 	.id_table = ads1158_id,
 };
-module_spi_driver(ads1158_driver);
+
+static int __init ads1158_init(void)
+{
+	buf = kmalloc(SPI_BUFSIZ, GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
+
+	return spi_register_driver(&ads1158_driver);
+}
+module_init(ads1158_init);
+
+static void __exit ads1158_exit(void)
+{
+	kfree(buf);
+	spi_unregister_driver(&ads1158_driver);
+}
+module_exit(ads1158_exit);
 
 MODULE_AUTHOR("Alain Péteut <alain.peteut@spacetek.ch>");
 MODULE_DESCRIPTION("ADS1158 ADC");
