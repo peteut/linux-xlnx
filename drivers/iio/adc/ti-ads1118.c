@@ -7,6 +7,8 @@
  *
  */
 
+#define DEBUG
+
 #include "linux/iio/types.h"
 #include <linux/bitfield.h>
 #include <linux/kernel.h>
@@ -105,76 +107,6 @@ enum ads1118_nop {
 	 FIELD_PREP_CONST(NOP_MASK, NOP_VALID_DATA) | BIT(RESERVED))
 static_assert(REG_CONFIG_RESET == 0x058b);
 
-static struct reg_default ads1118_reg_defaults[] = {
-	{ REG_CONFIG, REG_CONFIG_RESET },
-};
-
-static const struct regmap_range ads1118_write_ranges[] = {
-	regmap_reg_range(REG_CONFIG, REG_CONFIG),
-};
-
-static const struct regmap_access_table ads1118_reg_write_tbl = {
-	.yes_ranges = ads1118_write_ranges,
-	.n_yes_ranges = ARRAY_SIZE(ads1118_write_ranges),
-};
-
-static const struct regmap_range ads1118_read_ranges[] = {
-	regmap_reg_range(REG_CONVERSION, REG_CONFIG),
-};
-
-static const struct regmap_access_table ads1118_reg_read_tbl = {
-	.yes_ranges = ads1118_read_ranges,
-	.n_yes_ranges = ARRAY_SIZE(ads1118_read_ranges),
-};
-
-static const struct regmap_range ads1118_volatile_ranges[] = {
-	regmap_reg_range(REG_CONVERSION, REG_CONFIG),
-};
-
-static const struct regmap_access_table ads1118_reg_volatile_tbl = {
-	.yes_ranges = ads1118_volatile_ranges,
-	.n_yes_ranges = ARRAY_SIZE(ads1118_volatile_ranges),
-};
-
-static int ads1118_reg_read(void *context, unsigned int reg, unsigned int *val)
-{
-	struct spi_device *spi = context;
-	unsigned int cmd = 0;
-	int ret;
-
-	switch (reg) {
-	case REG_CONFIG:
-		/* Ignore data, readback config. */
-		ret = spi_write_then_read(spi, &cmd, 2, val, 2);
-		break;
-	case REG_CONVERSION:
-		/* 16-bit data transmission cycle. */
-		ret = spi_read(spi, val, 2);
-		break;
-	default:
-		return -ERANGE;
-	}
-
-	return ret;
-}
-
-static const struct regmap_config ads1118_regmap_config = {
-	.reg_bits = 8,
-	.val_bits = 16,
-	.max_register = REG_CONFIG,
-	.wr_table = &ads1118_reg_write_tbl,
-	.rd_table = &ads1118_reg_read_tbl,
-	.volatile_table = &ads1118_reg_volatile_tbl,
-	.reg_read = ads1118_reg_read,
-	.write_flag_mask = FIELD_PREP_CONST(NOP_MASK, NOP_VALID_DATA),
-	.reg_defaults = ads1118_reg_defaults,
-	.num_reg_defaults = ARRAY_SIZE(ads1118_reg_defaults),
-	.use_single_read = true,
-	.use_single_write = true,
-	.val_format_endian = REGMAP_ENDIAN_BIG,
-	.can_sleep = true,
-};
-
 enum ads1118_scan_si {
 	SI_AIN0_VS_AIN1,
 	SI_AIN0_VS_AIN3,
@@ -201,7 +133,6 @@ static_assert(SI_MAX == 8);
 			.sign = 's', \
 			.realbits = 16, \
 			.storagebits = 16, \
-			.endianness = IIO_BE, \
 		}, \
 		.datasheet_name = __stringify(CONCATENATE(AIN, _chan)), \
 }
@@ -220,7 +151,6 @@ static_assert(SI_MAX == 8);
 			.sign = 's', \
 			.realbits = 16, \
 			.storagebits = 16, \
-			.endianness = IIO_BE, \
 		}, \
 		.datasheet_name = __stringify( \
 			CONCATENATE( \
@@ -247,9 +177,10 @@ static const struct iio_chan_spec ads1118_channels[] = {
 				      BIT(IIO_CHAN_INFO_SCALE) |
 				      BIT(IIO_CHAN_INFO_SAMP_FREQ),
 		.scan_type = { .sign = 's',
-			       .realbits = 16,
+			       .realbits = 14,
 			       .storagebits = 16,
-			       .endianness = IIO_BE },
+			       .shift = 2,
+		},
 		.datasheet_name = "TS",
 	}
 };
@@ -257,7 +188,6 @@ static_assert(ARRAY_SIZE(ads1118_channels) == SI_MAX + 1);
 
 struct ads1118_state {
 	struct spi_device *spi;
-	struct regmap *regmap;
 	struct mutex lock;
 	struct {
 		const char *label;
@@ -287,28 +217,25 @@ static int ads1118_read_single_value(struct iio_dev *indio_dev,
 	struct ads1118_state *st = iio_priv(indio_dev);
 	unsigned int cfg;
 	unsigned int conversion_time_us;
+	u16 txbuf[1];
+	/* Doing dummy read due to Rx timing issue. */
+	u16 rxbuf[4];
 	int ret;
 
 	ret = iio_device_claim_direct_mode(indio_dev);
-	if (!ret)
+	if (ret)
 		return ret;
 
-	if (chan->type == IIO_TEMP) {
-	}
 	switch (chan->type) {
 	case IIO_TEMP:
 		cfg = BIT(TS_MODE) | BIT(SS_ENABLE) |
 		      FIELD_PREP_CONST(MODE_MASK, MODE_PWR_DOWN_AND_SS) |
 		      FIELD_PREP(DR_MASK, st->channel_data[SI_MAX].data_rate) |
 		      FIELD_PREP_CONST(NOP_MASK, NOP_VALID_DATA);
-		ret = regmap_write(st->regmap, REG_CONFIG, cfg);
-		if (!ret)
-			goto err;
 
 		conversion_time_us = DIV_ROUND_UP(
 			MEGA,
 			ads1118_dr_sps[st->channel_data[SI_MAX].data_rate]);
-		usleep_range(conversion_time_us, conversion_time_us * 2);
 		break;
 	case IIO_VOLTAGE:
 		cfg = BIT(SS_ENABLE) | FIELD_PREP(MUX_MASK, chan->scan_index) |
@@ -328,12 +255,57 @@ static int ads1118_read_single_value(struct iio_dev *indio_dev,
 		goto err;
 	}
 
+	txbuf[0] = cpu_to_be16(cfg);
+	ret = spi_write_then_read(st->spi, txbuf, 2, rxbuf, 2);
+	if (ret)
+		goto err;
+
 	usleep_range(conversion_time_us, conversion_time_us * 2);
-	ret = regmap_read(st->regmap, REG_CONVERSION, val);
+
+	ret = spi_read(st->spi, rxbuf, sizeof(rxbuf));
+	if (ret)
+		goto err;
+
 err:
 	iio_device_release_direct_mode(indio_dev);
 
-	return ret;
+	if (ret < 0)
+		return ret;
+
+	if ((cfg | BIT(RESERVED)) != (BIT(SS_ENABLE) | be16_to_cpu(rxbuf[3])))
+		return -EIO;
+
+	*val = (__s16)be16_to_cpu(rxbuf[2]);
+
+	return IIO_VAL_INT;
+}
+
+static int ads1118_read_data_rate(struct ads1118_state *st,
+				  struct iio_chan_spec const *chan, int *val)
+{
+	switch (chan->type) {
+	case IIO_TEMP:
+		*val = ads1118_dr_sps[DR_DEFAULT];
+		return IIO_VAL_INT;
+	case IIO_VOLTAGE:
+		*val = ads1118_dr_sps[st->channel_data[chan->scan_index]
+					      .data_rate];
+		return IIO_VAL_INT;
+	default:
+		return -EINVAL;
+	}
+}
+static int ads1118_scale(struct ads1118_state *st,
+			 struct iio_chan_spec const *chan, int *val, int *val2)
+{
+	if (chan->type == IIO_TEMP) {
+		*val = 3125;
+		*val2 = HECTO;
+		return IIO_VAL_FRACTIONAL;
+	}
+	*val = ads1118_pga_fsr_mv[st->channel_data[chan->scan_index].pga];
+	*val2 = 0x7fff;
+	return IIO_VAL_FRACTIONAL;
 }
 
 static int ads1118_read_raw(struct iio_dev *indio_dev,
@@ -348,21 +320,14 @@ static int ads1118_read_raw(struct iio_dev *indio_dev,
 	case IIO_CHAN_INFO_RAW:
 		ret = ads1118_read_single_value(indio_dev, chan, val);
 		break;
+	case IIO_CHAN_INFO_SCALE:
+		ret = ads1118_scale(st, chan, val, val2);
+		break;
 	case IIO_CHAN_INFO_SAMP_FREQ:
-		switch (chan->type) {
-		case IIO_TEMP:
-			*val = ads1118_dr_sps[DR_DEFAULT];
-			ret = IIO_VAL_INT;
-			break;
-		case IIO_VOLTAGE:
-			*val = ads1118_dr_sps[st->channel_data[chan->scan_index]
-						      .data_rate];
-			ret = IIO_VAL_INT;
-			break;
-		default:
-			ret = -EINVAL;
-		}
+		ret = ads1118_read_data_rate(st, chan, val);
+		break;
 	default:
+		dev_err(indio_dev->dev.parent, "Unknown mask %ld\n", mask);
 		ret = -EINVAL;
 	}
 	mutex_unlock(&st->lock);
@@ -394,25 +359,10 @@ static int ads1118_read_label(struct iio_dev *indio_dev,
 	return ret;
 }
 
-int ads1118_debugfs_reg_access(struct iio_dev *indio_dev, unsigned reg,
-			       unsigned writeval, unsigned *readval)
-{
-	struct ads1118_state *st = iio_priv(indio_dev);
-	int ret;
-
-	if (!readval)
-		ret = regmap_write(st->regmap, reg, writeval);
-	else
-		ret = regmap_read(st->regmap, reg, readval);
-
-	return ret;
-}
-
 static const struct iio_info ads1118_info = {
 	.read_avail = ads1118_read_avail,
 	.read_raw = ads1118_read_raw,
 	.read_label = ads1118_read_label,
-	.debugfs_reg_access = ads1118_debugfs_reg_access,
 };
 
 static int ads1118_chan_init(struct iio_dev *indio_dev)
@@ -436,13 +386,13 @@ static int ads1118_chan_init(struct iio_dev *indio_dev)
 	channel_i = 0;
 	device_for_each_child_node(indio_dev->dev.parent, child) {
 		u32 val;
-		const char *name;
+		const char *label;
 		unsigned int reg;
 		enum ads1118_pga pga = PGA_DEFAULT;
 		enum ads1118_dr data_rate = DR_DEFAULT;
 		size_t i;
 
-		if (!fwnode_property_read_u32(child, "reg", &val)) {
+		if (fwnode_property_read_u32(child, "reg", &val)) {
 			dev_err(indio_dev->dev.parent, "Invalid reg on %pfw\n",
 				child);
 			continue;
@@ -456,14 +406,12 @@ static int ads1118_chan_init(struct iio_dev *indio_dev)
 			continue;
 		}
 
-		/* label is optional */
-		st->channel_data[reg].label =
-			(!fwnode_property_read_string(child, "label", &name)) ?
-				name :
-				NULL;
+		if (fwnode_property_read_string(child, "label", &label))
+			label = NULL;
 
 		if (!fwnode_property_read_u32(child, "ti,gain", &val))
 			pga = val;
+
 		if (pga >= PGA_MAX) {
 			dev_err(indio_dev->dev.parent, "Invalid gain on %pfw\n",
 				child);
@@ -471,16 +419,17 @@ static int ads1118_chan_init(struct iio_dev *indio_dev)
 			return -EINVAL;
 		}
 
-		if (!fwnode_property_read_u32(child, "ti,datarate", &val)) {
+		if (!fwnode_property_read_u32(child, "ti,datarate", &val))
 			data_rate = val;
-			if (data_rate >= DR_MAX) {
-				dev_err(indio_dev->dev.parent,
-					"Invalid data rate on %pfw\n", child);
-				fwnode_handle_put(child);
-				return -EINVAL;
-			}
+
+		if (data_rate >= DR_MAX) {
+			dev_err(indio_dev->dev.parent,
+				"Invalid data rate on %pfw\n", child);
+			fwnode_handle_put(child);
+			return -EINVAL;
 		}
 
+		st->channel_data[reg].label = label;
 		st->channel_data[reg].pga = pga;
 		st->channel_data[reg].data_rate = data_rate;
 
@@ -527,11 +476,6 @@ static int ads1118_probe(struct spi_device *spi)
 	iio_device_set_parent(indio_dev, &spi->dev);
 	indio_dev->info = &ads1118_info;
 	indio_dev->modes = INDIO_DIRECT_MODE;
-
-	st->regmap = devm_regmap_init_spi(spi, &ads1118_regmap_config);
-	if (IS_ERR(st->regmap))
-		return dev_err_probe(&spi->dev, PTR_ERR(st->regmap),
-				     "Could not initialise regmap\n");
 
 	mutex_init(&st->lock);
 
